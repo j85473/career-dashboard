@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { paylocityPostingId, resolvePaylocityObservation } from '../../src/lib/paylocityPostingIdentity';
-import { generatePostingIdentity, isLikelyDuplicatePosting, isDirectAtsReprint } from '../../src/lib/jobIngestion';
+import { generatePostingIdentity, isLikelyDuplicatePosting, isDirectAtsReprint, isConservativeSyndicatedDuplicate } from '../../src/lib/jobIngestion';
 import { urlPostingIdentity } from '../../src/lib/jobUrlReconciliation';
 import { paylocityClosureRedirect, paylocityRecoveryClosed, paylocityRetryDelayMs } from '../../src/lib/paylocityRecovery';
 
@@ -40,6 +40,8 @@ test('different Paylocity numbers never merge even with identical descriptions, 
   const b = { ...a, url: url('4217643') };
   assert.equal(isLikelyDuplicatePosting(a, b), false);
   assert.equal(isDirectAtsReprint(a, { ...b, source: 'SerpApi' }), false);
+  assert.equal(isConservativeSyndicatedDuplicate(a, { ...b, company: 'Lensa' }), false);
+  assert.equal(isConservativeSyndicatedDuplicate(a, { ...b, company: 'Lensa', url: a.url }), true);
   assert.equal(isLikelyDuplicatePosting(a, { ...b, url: a.url }), true);
   assert.equal(isLikelyDuplicatePosting(a, { ...b, title: 'Accountant', company: 'Other' }), false);
 });

@@ -1155,6 +1155,7 @@ export function isConservativeSyndicatedDuplicate(
   existing: DuplicateJobIdentity,
   incoming: DuplicateJobIdentity,
 ): boolean {
+  if (paylocityPostingsConflict(existing.canonicalUrl || existing.url, incoming.canonicalUrl || incoming.url)) return false;
   const isSyndicator = isSyndicatorCompany;
   if (!isSyndicator(existing.company) && !isSyndicator(incoming.company)) return false;
   const existingTitle = normalizeTitle(existing.title || '');
