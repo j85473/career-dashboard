@@ -2,9 +2,11 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -249,6 +251,34 @@ class RepositoryTests(unittest.TestCase):
             self.assertFalse((directory / (oldest + '.dump')).exists())
             self.assertEqual(list((directory / 'retiring-recovery-points').iterdir()), [])
             self.assertTrue((directory / 'retired-recovery-points' / (oldest + '.json')).exists())
+
+    def test_standalone_deployment_retention_keeps_three_readable_and_protects_recent_or_corrupt(self):
+        for day in range(1, 8):
+            path = self.local / f'predeploy-202610{day:02d}T081500Z.dump'
+            path.write_bytes(b'corrupt' if day == 6 else b'archive')
+            if day != 7:
+                os.utime(path, (time.time() - 7200, time.time() - 7200))
+        def command(args, **_):
+            if Path(args[-1]).read_bytes() == b'corrupt':
+                raise RuntimeError('unreadable archive')
+            return 'readable table of contents'
+        self.engine.command = command
+        self.engine.prune_predeployment()
+        self.assertEqual([path.name for path in sorted(self.local.glob('predeploy-*.dump'))],
+                         [f'predeploy-202610{day:02d}T081500Z.dump' for day in (3, 4, 5, 6, 7)])
+
+    def test_retry_reclaims_eligible_failed_attempts_before_admitting_more_data(self):
+        events = []
+        self.engine.prune_predeployment = lambda: events.append('deployment-cleanup')
+        self.engine.cleanup_unpublished = lambda: events.append('failed-attempt-cleanup')
+        self.engine.reconcile_publication = lambda: events.append('receipt-recovery')
+        def stop(*args):
+            events.append('space-check')
+            raise RuntimeError('stop before starting a new producer')
+        self.engine.space = stop
+        with self.assertRaises(RuntimeError):
+            self.engine.backup(['producer'], ['files'], point='m70-20261028T081500Z')
+        self.assertEqual(events, ['deployment-cleanup', 'failed-attempt-cleanup', 'receipt-recovery', 'space-check'])
 
 
 if __name__ == '__main__':

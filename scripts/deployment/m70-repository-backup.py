@@ -341,6 +341,24 @@ class RepositoryBackup:
                     raise RuntimeError('Retained legacy archive failed verification')
                 expected.remove(name)
 
+    def prune_predeployment(self):
+        """Keep the prior three-readable-archives policy, independent of nightly format."""
+        complete = 0
+        cutoff = time.time() - 3600
+        for path in sorted(self.local.glob('predeploy-*.dump'), reverse=True):
+            if not re.fullmatch(r'predeploy-\d{8}T\d{6}Z\.dump', path.name) or path.is_symlink():
+                continue
+            if not path.is_file() or not path.stat().st_size or path.stat().st_mtime >= cutoff:
+                continue
+            try:
+                self.command(['pg_restore', '--list', str(path)])
+            except RuntimeError:
+                continue
+            complete += 1
+            if complete > 3:
+                path.unlink()
+                print('Retired older readable predeployment archive ' + path.name, flush=True)
+
     def retain(self):
         pending = {}
         for disk in ('local', 'ssd'):
@@ -458,6 +476,13 @@ class RepositoryBackup:
                     raise RuntimeError('Invalid abandoned snapshot identity')
                 remove.append(snapshot['id'])
             if remove:
+                keep, _ = retention_plan(points)
+                for point in keep:
+                    if point['format'] == 'legacy':
+                        self.verify_legacy(point)
+                    else:
+                        self.validate_point_snapshots(point)
+                self.command(self.restic(disk, 'check', '--read-data'))
                 self.command(self.restic(disk, 'forget', *remove))
                 self.command(self.restic(disk, 'prune', '--max-repack-size', '1G'), disks=(disk,))
                 self.command(self.restic(disk, 'check'))
@@ -466,8 +491,12 @@ class RepositoryBackup:
         point = point or dt.datetime.now(dt.timezone.utc).strftime('m70-%Y%m%dT%H%M%SZ')
         if not STAMP.fullmatch(point):
             raise RuntimeError('Invalid recovery point name')
-        self.space('local', 'ssd')
+        self.prune_predeployment()
+        # Reclaim eligible failed attempts BEFORE admitting another dump, so a
+        # failed run cannot permanently occupy the room its retry needs.
+        self.cleanup_unpublished()
         self.reconcile_publication()
+        self.space('local', 'ssd')
         before = sum(path.stat().st_size for path in (self.local / 'repository').rglob('*') if path.is_file())
         snapshots, checksums = {}, {}
         for kind, command in (('database', producer), ('files', files_producer)):
@@ -574,6 +603,11 @@ def main():
                          '-C', temporary, 'runtime-snapshot']
                 producer, env = database_producer()
                 engine.backup(producer, files, env)
+            # Keep the former housekeeping policy restricted to old cron logs.
+            cutoff = time.time() - 30 * 24 * 3600
+            for path in (APP / 'data/runtime').glob('cron-*.log'):
+                if path.is_file() and not path.is_symlink() and path.stat().st_mtime < cutoff:
+                    path.unlink()
             if args.action == 'bootstrap':
                 if ENABLED.exists():
                     raise RuntimeError('Repository mode is already enabled; use backup instead')

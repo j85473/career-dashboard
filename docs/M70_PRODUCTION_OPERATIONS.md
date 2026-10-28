@@ -130,6 +130,11 @@ For every point the coordinator:
    completed cleanup resumable. Unknown or unmatched historical archives stay
    protected. Restic pruning preserves chunks shared by retained snapshots.
 
+Standalone predeployment archives continue their separate three-readable-copy
+retention policy; archives less than one hour old and unreadable files are
+protected. The replacement also preserves the former 30-day cleanup of files
+named `cron-*.log`, without touching other runtime history.
+
 Failed copies, failed restores and interrupted source dumps preserve the last
 good points. Interrupted receipt publication is reverified before completion.
 Abandoned snapshots belonging to this engine are eligible for cleanup only
@@ -150,7 +155,8 @@ capacity failure must preserve the existing recovery points.
 The nightly timer stays at 03:15 America/Chicago. A persistent systemd drop-in
 selects `/usr/local/sbin/career-m70-repository-backup`; its engine is installed
 outside the release tree. Both survive an application rollback. The service
-allows three hours for full verification. Automatic reboot maintenance checks
+allows three hours for full verification and at most two starts in eight
+hours, so long timeouts cannot turn into a continuous retry loop. Automatic reboot maintenance checks
 the new recovery format and its 24-hour freshness before proceeding.
 
 The repository key is `/etc/career-dashboard/backup-repository.key`, owned by

@@ -14,6 +14,8 @@ test('repository backups remain scheduled and verifiable across application roll
   const maintenance = readFileSync('scripts/deployment/m70-auto-maintenance.py', 'utf8');
   assert.match(install, /backup-repository-enabled/);
   assert.match(install, /60-repository-backup\.conf/);
+  assert.match(install, /StartLimitIntervalSec=8h/);
+  assert.match(install, /TimeoutStartSec=3h/);
   assert.match(install, /ExecStart=\nExecStart=\/usr\/local\/sbin\/career-m70-repository-backup/);
   assert.match(install, /\/usr\/local\/lib\/career-dashboard\/m70-repository-backup\.py/);
   assert.match(activation, /install-m70-repository-backup\.sh/);

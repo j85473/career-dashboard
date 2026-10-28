@@ -29,6 +29,9 @@ WRAPPER
 chmod 755 /usr/local/sbin/career-m70-repository-backup
 install -d -o root -g root -m 755 /etc/systemd/system/career-dashboard-backup.service.d
 cat > /etc/systemd/system/career-dashboard-backup.service.d/60-repository-backup.conf <<'UNIT'
+[Unit]
+# Two possible three-hour runs plus their delayed retry fit inside this window.
+StartLimitIntervalSec=8h
 [Service]
 ExecStart=
 ExecStart=/usr/local/sbin/career-m70-repository-backup
