@@ -143,6 +143,22 @@ test('reads encoded range separators without taking the first endpoint as fixed 
   assert.equal(extractPostedBaseCompensation('Salary: $80,000 &amp;ndash; $100,000'), '$80,000–$100,000 base');
 });
 
+test('does not double-decode markup that hides variable pay or a nonannual period', () => {
+  assert.equal(extractPostedBaseCompensation('Base salary: $100,000 &amp;lt;including bonus&amp;gt;'), null);
+  assert.equal(extractPostedBaseCompensation('Salary: $80,000 &AMP;LT;monthly&AMP;GT;'), null);
+});
+
+test('preserves supported named and numeric pay separators in a single decoding pass', () => {
+  for (const separator of ['mdash', '#8212', '#x2014', 'ndash', '#8211', '#x2013']) {
+    for (const prefix of ['&', '&amp;', '&AMP;']) {
+      assert.equal(extractPostedBaseCompensation(`Base salary: $80,000 ${prefix}${separator}; $100,000`), '$80,000–$100,000 base');
+    }
+  }
+  for (const space of ['nbsp', '#160', '#xa0']) {
+    assert.equal(extractPostedBaseCompensation(`Base&AMP;${space};salary: $100,000`), '$100,000 base');
+  }
+});
+
 test('does not choose the first city or level in a salary table', () => {
   assert.equal(extractPostedBaseCompensation('Annual Salary Range\nCalifornia $179,200 to $212,800\nCleveland $151,200 to $179,550'), null);
   assert.equal(extractPostedBaseCompensation('Salary ranges estimate for this role is\nZone 1: $111,800 USD - $167,600 USD\nApplicable for CA, CT, NY\nZone 2: $104,500 USD - $156,700 USD'), null);

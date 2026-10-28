@@ -42,6 +42,13 @@ const IMPLAUSIBLE_ANNUAL_FLOOR = 15_000;
  */
 const MAX_RANGE_RATIO = 10;
 
+const POSTING_ENTITIES: Readonly<Record<string, string>> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  mdash: '—', '#8212': '—', '#x2014': '—',
+  ndash: '–', '#8211': '–', '#x2013': '–',
+  nbsp: ' ', '#160': ' ', '#xa0': ' ',
+};
+
 function formatAmount(raw: string): string | null {
   const amount = Number(raw.replaceAll(',', ''));
   if (!Number.isFinite(amount) || amount <= 0) return null;
@@ -79,12 +86,14 @@ function displayAmount(raw: string, value: number): string | null {
  */
 export function extractPostedBaseCompensation(description: string | null | undefined): string | null {
   const text = description
-    ?.replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"').replace(/&apos;/gi, "'")
-    .replace(/&(?:mdash|#8212|#x2014);/gi, '—')
-    .replace(/&(?:ndash|#8211|#x2013);/gi, '–')
-    .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
+    // Match original input once: decoded ampersands must not introduce markup
+    // for another entity replacement to decode. Known nested pay separators
+    // remain explicit matches so existing posted ranges keep both endpoints.
+    ?.replace(/&((?:amp;)?(?:mdash|#8212|#x2014|ndash|#8211|#x2013|nbsp|#160|#xa0)|amp|lt|gt|quot|apos);/gi,
+      (_match, entity: string) => {
+        const key = entity.toLowerCase();
+        return POSTING_ENTITIES[key.startsWith('amp;') ? key.slice(4) : key];
+      })
     .replace(/<[^>]*>/g, ' ')
     .replace(/\\([-.])/g, '$1')
     .replace(/[^\S\n]+/g, ' ').trim();
