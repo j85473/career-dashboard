@@ -24,6 +24,11 @@ export type BrowserDocument = {
     html: string;
     text: string;
 };
+
+/** Paylocity separates work arrangement from site/department with a bullet. */
+export function paylocityPublishedLocation(value: string): string {
+    return value.replace(/\s+/g, ' ').trim().replace(/^(Fully Remote)\s*[•·]\s*/i, '$1; ');
+}
 export class BrowserPostingEvidenceError extends Error {
     constructor(message: string, readonly counted = false) { super(message); }
 }
@@ -295,7 +300,7 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         if (!location && platform === 'jobvite')
             location = jobvitePublishedLocation(doc.html, doc.url);
         if (!location && platform === 'paylocity')
-            location = $('.job-preview-header .preview-location').first().text().replace(/\s+/g, ' ').trim();
+            location = paylocityPublishedLocation($('.job-preview-header .preview-location').first().text());
         if (!location && platform === 'avature')
             location = avaturePublishedLocation(doc.html);
         if (!location) {
