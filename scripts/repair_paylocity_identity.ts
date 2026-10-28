@@ -171,8 +171,37 @@ async function recover(plan: Plan) {
     })();
     catalogues.set(board, pending); return pending;
   }
-  async function retain(c: Candidate, posting: { id: string; title: string; company: string; location: string; description: string; url: string }, closed = false) {
-    const outcome = await ingestExternalJob({ ...posting, source: 'ATS-paylocity', sourceId: c.sourceId,
+  async function retain(c: Candidate, posting: { id: string; title: string; company: string; location: string; description: string; url: string }, closed = false, filteredReason?: string) {
+    let outcome: string;
+    if (filteredReason) {
+      // The verified metadata has already failed the ordinary admission gate.
+      // No fuzzy/description search can add identity evidence to an empty JD.
+      // Use the exact global posting number, retaining any existing human work.
+      outcome = await prisma.$transaction(async tx => {
+        const postingIdentity = generatePostingIdentity({ url: posting.url })!;
+        let job = await tx.job.findUnique({ where: { postingIdentity } });
+        if (!job) {
+          const matches = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM "Job"
+            WHERE lower("canonicalUrl")=lower(${posting.url})
+              AND ("passReason" IS NULL OR "passReason" NOT LIKE 'Consolidated after URL edit into job %')
+            ORDER BY "createdAt" DESC LIMIT 1`;
+          if (matches[0]) job = await tx.job.findUnique({ where: { id: matches[0].id } });
+        }
+        const found = Boolean(job);
+        if (!job) job = await tx.job.create({ data: { title: posting.title, company: posting.company,
+          location: posting.location, description: '', url: posting.url, canonicalUrl: posting.url,
+          source: 'ATS-paylocity', sourceId: `paylocity-posting:${posting.id}`, postingIdentity,
+          postedAt: new Date(plan.capturedAt),
+          status: 'archived', scoringStatus: 'skipped', passReason: filteredReason } });
+        await tx.jobSourceObservation.upsert({ where: { source_sourceId: { source: 'ATS-paylocity', sourceId: `paylocity-posting:${posting.id}` } },
+          update: {}, create: { source: 'ATS-paylocity', sourceId: `paylocity-posting:${posting.id}`, jobId: job.id, url: posting.url,
+            ingestionMode: 'paylocity-identity-recovery', queryFamily: 'recovery', geoLane: 'source_posted_location' } });
+        if (!found) await recordJobPipelineEvent({ eventType: 'prefilter_rejected', stage: 'ingestion', source: 'ATS-paylocity',
+          sourceId: `paylocity-posting:${posting.id}`, jobId: job.id, details: { reason: filteredReason, route: 'paylocity-identity-recovery' },
+          identityParts: ['paylocity-identity-recovery', c.id] }, tx);
+        return found ? 'duplicate' : 'filtered';
+      });
+    } else outcome = await ingestExternalJob({ ...posting, source: 'ATS-paylocity', sourceId: c.sourceId,
       ingestionMode: 'paylocity-identity-recovery', queryFamily: 'recovery', geoLane: 'source_posted_location' });
     const rows = await prisma.jobSourceObservation.findMany({ where: { source: 'ATS-paylocity', OR: [
       { sourceId: `paylocity-posting:${posting.id}` }, { sourceId: c.sourceId },
@@ -202,7 +231,7 @@ async function recover(plan: Plan) {
       const title = c.link && previewBrowserAtsListingTitle({ title: c.link.title, titleComplete: c.link.titleVerified });
       const verdict = published && evaluateAuthoritativeMetadata({ ...published, company: meta!.company, url: c.url });
       if (published && verdict && !verdict.passes) {
-        result = await retain(c, { ...published, id: paylocityPostingId(c.url)!, company: meta!.company, url: c.url, description: '' });
+        result = await retain(c, { ...published, id: paylocityPostingId(c.url)!, company: meta!.company, url: c.url, description: '' }, false, verdict.reason);
       } else if (title?.wouldSkip) {
         result = { outcome: 'filtered_title', title: c.link!.title, reason: title.reason };
         await recordOutcome(c, result, true);
