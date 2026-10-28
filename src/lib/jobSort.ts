@@ -25,7 +25,7 @@ export function defaultJobSort(status: string): 'combined' | 'newest' | 'aim_fit
 
 /**
  * Applied is an application log, not a score board. Its only meaningful order
- * is the latest explicit transition into Applied first, so stale browser state
+ * is the original application date first, so stale browser state
  * and hand-written API requests cannot switch it back to score or oldest-first
  * ordering.
  */

@@ -22,9 +22,10 @@ function statusEntryCandidateWhere(dashboardStatus: string, historyStatus: strin
 
 /**
  * Paginate a lifecycle board by the latest time each job entered that board's
- * current status. A later edit must not make an old application or dismissal
- * look new. updatedAt is used only for rows that predate status-history
- * tracking; createdAt is ingestion time and never participates.
+ * current status. Applied instead uses the original application date in the
+ * current Applied/Interviewing run, matching the date displayed on its card.
+ * Other boards retain updatedAt for rows that predate status-history tracking.
+ * createdAt is ingestion time and never participates.
  */
 export async function statusEntryOrderedPage(
   where: Prisma.JobWhereInput,
@@ -57,12 +58,32 @@ export async function statusEntryOrderedPage(
       GROUP BY history."jobId"
     ) history ON history."jobId" = job.id
   ` : Prisma.empty;
+  // Match applicationDateFromHistory: returning from Interviewing or repeating
+  // Applied preserves the first Applied event, but a lifecycle break starts a
+  // new application. Compare IDs too, matching the display's history tie order.
+  const applicationDate = Prisma.sql`(
+    SELECT MIN(history."createdAt")
+    FROM "JobStatusHistory" history
+    WHERE history."jobId" = job.id
+      AND history.status = 'applied'
+      AND NOT EXISTS (
+        SELECT 1 FROM "JobStatusHistory" boundary
+        WHERE boundary."jobId" = job.id
+          AND boundary.status NOT IN ('applied', 'interviewing')
+          AND (boundary."createdAt", boundary.id) > (history."createdAt", history.id)
+      )
+  )`;
   const enteredAt = groupedHistory ? Prisma.sql`history."enteredAt"` : Prisma.sql`(
     SELECT MAX(history."createdAt")
     FROM "JobStatusHistory" history
     WHERE history."jobId" = job.id
       AND history.status = ${historyStatus}
   )`;
+  // An unknown application date stays undated and follows dated applications;
+  // a recent edit must never make it look like a new application.
+  const sortDate = dashboardStatus === 'applied'
+    ? applicationDate
+    : Prisma.sql`COALESCE(${enteredAt}, job."updatedAt")`;
 
   const [ordered, total] = await Promise.all([
     client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -70,7 +91,7 @@ export async function statusEntryOrderedPage(
       FROM "Job" job
       ${historyJoin}
       WHERE ${candidateWhere}
-      ORDER BY COALESCE(${enteredAt}, job."updatedAt") ${order},
+      ORDER BY ${sortDate} ${order} NULLS LAST,
       job.id ASC
       LIMIT ${limit} OFFSET ${offset}
     `),
