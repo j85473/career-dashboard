@@ -119,7 +119,7 @@ async function recordOutcome(candidate: Candidate, result: Record<string, unknow
 }
 
 async function recover(plan: Plan) {
-  // Shared pacing and Retry-After across all four workers, including catalogue reads.
+  // Shared pacing and Retry-After across all eight workers, including catalogue reads.
   let nextRequestAt = 0, spacing = 250;
   async function request(url: string, hop = 0): Promise<Response> {
     if (hop > 5) throw Error('Too many publisher redirects');
@@ -281,7 +281,7 @@ async function recover(plan: Plan) {
     processed++;
     if (processed % 100 === 0) console.log(JSON.stringify({ processed, total: candidates.length, counts }));
   }
-  await Promise.all(Array.from({ length: 4 }, async () => { while (position < candidates.length) await one(candidates[position++]); }));
+  await Promise.all(Array.from({ length: 8 }, async () => { while (position < candidates.length) await one(candidates[position++]); }));
   console.log(JSON.stringify({ processed, total: candidates.length, counts }));
 }
 

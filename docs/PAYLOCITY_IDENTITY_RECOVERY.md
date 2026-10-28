@@ -17,7 +17,8 @@ Every phase requires `--directory <private-report-directory>`.
    observations with their saved board/title evidence.
 2. `--apply --selection-hash <hash> --keys` repairs only posting identities.
 3. `--apply --selection-hash <hash> --recover` resumes recovery. `--limit N`
-   bounds a verification sample. Four workers read public employer pages.
+   bounds a verification sample. Eight workers overlap database work and public
+   employer reads, sharing one request pacer and publisher retry delays.
    Verified employer catalogue metadata passes through the existing local
    admission rules. Eligible postings receive full detail reads and ordinary
    ingestion. Existing application, score and pass states are never reset.
