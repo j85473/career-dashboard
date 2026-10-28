@@ -3,8 +3,19 @@ import test from 'node:test';
 import { paylocityPostingId, resolvePaylocityObservation } from '../../src/lib/paylocityPostingIdentity';
 import { generatePostingIdentity, isLikelyDuplicatePosting, isDirectAtsReprint } from '../../src/lib/jobIngestion';
 import { urlPostingIdentity } from '../../src/lib/jobUrlReconciliation';
+import { paylocityRecoveryClosed, paylocityRetryDelayMs } from '../../src/lib/paylocityRecovery';
 
 const url = (id: string) => `https://recruiting.paylocity.com/Recruiting/Jobs/Details/${id}`;
+test('recovery honors rate limits and only treats the publisher closure page as terminal', () => {
+  const closed = 'https://recruiting.paylocity.com/Recruiting/Jobs/JobNotFound';
+  const text = "We're sorry, that job does not exist or is not currently active.";
+  assert.equal(paylocityRecoveryClosed(closed, 'Job Not Found', text), true);
+  assert.equal(paylocityRecoveryClosed('https://evil.test/Recruiting/Jobs/JobNotFound', 'Job Not Found', text), false);
+  assert.equal(paylocityRecoveryClosed(closed, 'Verify you are human', text), false);
+  assert.equal(paylocityRecoveryClosed(url('4217642'), 'Job Not Found', text), false);
+  assert.equal(paylocityRetryDelayMs('90'), 90000);
+  assert.equal(paylocityRetryDelayMs(null), 30000);
+});
 test('Paylocity identity uses the numeric posting, consistently across ingestion and URL edits', () => {
   assert.equal(paylocityPostingId(url('4217642') + '/?utm_source=test'), '4217642');
   const a = generatePostingIdentity({ url: url('4217642') });

@@ -16,6 +16,7 @@ import { recordJobPipelineEvent } from '../src/lib/ingestionControl';
 import { publicPageData } from '../src/lib/browserAtsHttp';
 import { evaluateAuthoritativeMetadata } from '../src/lib/authoritativeMetadataGate';
 import { isClosedJobPosting } from '../src/lib/jobDescriptionQuality';
+import { paylocityRecoveryClosed, paylocityRetryDelayMs } from '../src/lib/paylocityRecovery';
 
 type Candidate = { id: string; jobId: string; sourceId: string; url: string; board: string | null; link: BrowserPostingLink | null };
 type Plan = { version: 1; capturedAt: string; hash: string; cards: Job[]; scores: JobScoreEvent[]; decisions: JobPipelineEvent[]; groups: string[][]; candidates: Candidate[] };
@@ -118,6 +119,20 @@ async function recordOutcome(candidate: Candidate, result: Record<string, unknow
 }
 
 async function recover(plan: Plan) {
+  // Shared pacing and Retry-After across all four workers, including catalogue reads.
+  let nextRequestAt = 0, spacing = 250;
+  async function request(url: string): Promise<Response> {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      while (Date.now() < nextRequestAt) await new Promise(resolve => setTimeout(resolve, nextRequestAt - Date.now()));
+      nextRequestAt = Date.now() + spacing;
+      const response = await safeExternalFetch(url, { signal: AbortSignal.timeout(15000) });
+      if (response.status !== 429) return response;
+      spacing = Math.min(2000, Math.max(500, spacing * 2));
+      nextRequestAt = Math.max(nextRequestAt, Date.now() + paylocityRetryDelayMs(response.headers.get('retry-after')));
+      await response.body?.cancel();
+    }
+    throw Error('Paylocity rate limited after bounded retries; checkpoint retained');
+  }
   type Metadata = { company: string; jobs: Record<string, { title: string; location: string }> };
   const catalogues = new Map<string, Promise<Metadata | null>>();
   const catalogueFile = path.join(folder, 'catalogues.jsonl');
@@ -129,7 +144,7 @@ async function recover(plan: Plan) {
     const cached = catalogues.get(board); if (cached) return cached;
     const pending = (async () => {
       try {
-        const response = await safeExternalFetch(board, { signal: AbortSignal.timeout(15000) });
+        const response = await request(board);
         if (!response.ok) { await response.body?.cancel(); return null; }
         const html = await readBoundedAtsBody(response, 5 * 1024 * 1024);
         const data = publicPageData(html), $ = cheerio.load(html);
@@ -192,7 +207,7 @@ async function recover(plan: Plan) {
         result = { outcome: 'filtered_title', title: c.link!.title, reason: title.reason };
         await recordOutcome(c, result, true);
       } else {
-        const response = await safeExternalFetch(c.url, { signal: AbortSignal.timeout(15000) });
+        const response = await request(c.url);
         if ([404, 410].includes(response.status)) {
           await response.body?.cancel(); result = { outcome: 'unavailable', httpStatus: response.status };
           if (meta && (published?.title || c.link?.title)) result = await retain(c, { id: paylocityPostingId(c.url)!, title: published?.title || c.link!.title,
@@ -201,12 +216,18 @@ async function recover(plan: Plan) {
         } else {
           if (!response.ok) { await response.body?.cancel(); throw Error('HTTP ' + response.status); }
           const html = await readBoundedAtsBody(response, 5 * 1024 * 1024);
-          if (paylocityPostingId(response.url || c.url) !== paylocityPostingId(c.url)) throw Error('Posting redirected away from its identity');
           const $ = cheerio.load(html);
-          if (isClosedJobPosting($('body').text()) && meta && (published?.title || c.link?.title)) {
-            return finish(c, await retain(c, { id: paylocityPostingId(c.url)!, title: published?.title || c.link!.title,
-              company: meta.company, location: published?.location || '', url: c.url, description: $('body').text().slice(0,10000) }, true));
+          $('script,style').remove();
+          const body = $('body').text();
+          if (paylocityRecoveryClosed(response.url, $('title').text(), body) || isClosedJobPosting(body)) {
+            if (meta && (published?.title || c.link?.title)) {
+              return finish(c, await retain(c, { id: paylocityPostingId(c.url)!, title: published?.title || c.link!.title,
+                company: meta.company, location: published?.location || '', url: c.url, description: body.slice(0,10000) }, true));
+            }
+            result = { outcome: 'unavailable', reason: 'publisher_confirmed_closed', finalUrl: response.url };
+            await recordOutcome(c, result, true); return finish(c, result);
           }
+          if (paylocityPostingId(response.url || c.url) !== paylocityPostingId(c.url)) throw Error('Posting redirected away from its identity');
           const link = c.link || { id: paylocityPostingId(c.url)!, title: '', url: c.url };
           const posting = parseBrowserPosting('paylocity', c.board || c.url, link, [{ url: c.url, html, text: $('body').text() }]);
           if (!posting) throw Error('Posting details could not be verified');
