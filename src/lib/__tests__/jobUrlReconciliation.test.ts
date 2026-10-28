@@ -662,3 +662,25 @@ test('Dayforce merge protection distinguishes career sites but permits a matchin
   assert.equal(dayforceCardMergeConflict(direct, reprint), null);
   assert.match(dayforceCardMergeConflict(direct, { ...direct, id: 'other', url: direct.url!.replace('6689', '6690') }) || '', /different Dayforce postings/);
 });
+
+test('historical repair keeps exact displayed scores and records the folded card decision', async () => {
+  const source = row({ id: 'copy', status: 'passed', passReason: 'Location mismatch', aimFitScore: 74, reqFitScore: 78 });
+  const target = row({ id: 'review', status: 'inbox', tailoringStaged: true, aimFitScore: 86, reqFitScore: 88 });
+  const f = fixture([source, target], [scoreRow({ id: 'old-score', jobId: 'copy', aim: 74, experience: 78 }),
+    scoreRow({ id: 'current-score', jobId: 'review', aim: 86, experience: 88 })]);
+  const result = await mergeDuplicateCards(f.tx, { redundantId: 'copy', survivorId: 'review', route: 'card_merge', scorePolicy: 'preserve_survivor' });
+  assert.equal(result.job.aimFitScore, 86);
+  assert.equal(result.job.reqFitScore, 88);
+  assert.equal(f.saved.get('copy')!.aimFitScore, 74);
+  assert.equal(f.saved.get('copy')!.reqFitScore, 78);
+  assert.ok(f.events.some(e => (e.details as Record<string,unknown>).priorPassReason === 'Location mismatch'));
+  assert.equal(f.scoreEvents.length, 0);
+});
+
+test('manual merge also refuses distinct Paylocity postings', async () => {
+  const a = row({ url: 'https://recruiting.paylocity.com/Recruiting/Jobs/Details/4217642' });
+  const b = row({ id: 'other', url: 'https://recruiting.paylocity.com/Recruiting/Jobs/Details/4217643' });
+  const f = fixture([a,b]);
+  await assert.rejects(mergeDuplicateCards(f.tx, { redundantId: 'copy', survivorId: 'other', route: 'card_merge' }), /different Paylocity/);
+  assert.equal(f.writes.length, 0);
+});

@@ -32,7 +32,7 @@ function icimsListingUrl(value: string, board: string, page: number): URL | null
 }
 
 /** Parse only JSON emitted by the public page; never execute page scripts. */
-function publicPageData(html: string): Record<string, unknown> | null {
+export function publicPageData(html: string): Record<string, unknown> | null {
     const start = /\bwindow\.pageData\s*=\s*\{/.exec(html);
     if (!start) return null;
     const offset = start.index + start[0].lastIndexOf('{');

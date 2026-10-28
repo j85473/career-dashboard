@@ -33,6 +33,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'lifecycle_reconciled',
   'failure_queue_expired',
   'source_observation_conflict',
+  'paylocity_identity_recovery',
   'applied_repeat_exception',
   'same_job_consolidated',
   'same_job_exception',

@@ -3,6 +3,7 @@ import { atsRotationCohortWhere } from './atsRotationCohort';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { adpPostingIdentity, adpPostingsConflict, isAdpPostingHost, matchesAdpPosting } from './adpPostingIdentity';
 import { providerPostingLocation } from './postingLocation';
+import { isPaylocityPostingHost, paylocityPostingId, paylocityPostingsConflict, resolvePaylocityObservation } from './paylocityPostingIdentity';
 import { recruiteePostingLocation } from './recruiteeLocation';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { dayforcePostingIdentity, isDayforcePostingHost, resolveDayforceObservation } from './dayforcePostingIdentity';
@@ -1092,6 +1093,7 @@ function descriptionSignature(description: string | null | undefined): string | 
 
 /** Reprints can lose HTML boundary spaces and append a short publisher footer. */
 export function isDirectAtsReprint(existing: DuplicateJobIdentity, incoming: DuplicateJobIdentity): boolean {
+  if (paylocityPostingsConflict(existing.canonicalUrl || existing.url, incoming.canonicalUrl || incoming.url)) return false;
   if (adpPostingsConflict(existing.canonicalUrl || existing.url, incoming.canonicalUrl || incoming.url)) return false;
   const direct = (row: DuplicateJobIdentity) => /^ATS-/i.test(row.source || '');
   if (direct(existing) === direct(incoming)) return false;
@@ -1226,6 +1228,11 @@ function requisitionIdentity(value: string | null | undefined): { host: string; 
     const host = url.hostname.toLowerCase();
     const pathSegments = url.pathname.split('/').filter(Boolean);
 
+    if (isPaylocityPostingHost(value)) {
+      const id = paylocityPostingId(value);
+      return id ? { host: 'paylocity', key: id } : null;
+    }
+
     if (isAdpPostingHost(value)) {
       const adp = adpPostingIdentity(value);
       return adp ? { host: `adp:${adp.cid}:${adp.ccId}`, key: adp.jobId } : null;
@@ -1306,6 +1313,7 @@ export function isLikelyDuplicatePosting(
 ): boolean {
   const existingUrl = existing.canonicalUrl || existing.url;
   const incomingUrl = incoming.canonicalUrl || incoming.url;
+  if (paylocityPostingsConflict(existingUrl, incomingUrl)) return false;
   if (adpPostingsConflict(existingUrl, incomingUrl)) return false;
   const existingDayforce = dayforcePostingIdentity(existing.canonicalUrl || existing.url);
   const incomingDayforce = dayforcePostingIdentity(incoming.canonicalUrl || incoming.url);
@@ -1900,7 +1908,8 @@ export async function externalJobAlreadyObserved(source: string, sourceId: strin
 
 /** A bad historical source link cannot suppress a fresh, distinct posting. */
 async function readIngestionObservation(source: string, sourceId: string, incomingUrl?: string | null) {
-  const resolve = source.toLowerCase() === 'ats-dayforce' ? resolveDayforceObservation : resolveLinkedInObservation;
+  const resolve = source.toLowerCase() === 'ats-paylocity' ? resolvePaylocityObservation
+    : source.toLowerCase() === 'ats-dayforce' ? resolveDayforceObservation : resolveLinkedInObservation;
   return resolve({ sourceId, incomingUrl, find: (key) => prisma.jobSourceObservation.findUnique({
     where: { source_sourceId: { source, sourceId: key } },
     include: { job: { select: { source: true, status: true, url: true, canonicalUrl: true } } },
@@ -1914,7 +1923,8 @@ async function recordObservationRecovery(source: string, resolved: Awaited<Retur
     eventType: 'source_observation_conflict',
     stage: 'ingestion', source, sourceId: resolved.sourceId,
     jobId: ignored.jobId,
-    details: { reason: source.toLowerCase() === 'ats-dayforce' ? 'different_dayforce_posting_namespace' : 'different_linkedin_posting_ids', historicalObservationId: ignored.id,
+    details: { reason: source.toLowerCase() === 'ats-paylocity' ? 'different_paylocity_posting_ids'
+      : source.toLowerCase() === 'ats-dayforce' ? 'different_dayforce_posting_namespace' : 'different_linkedin_posting_ids', historicalObservationId: ignored.id,
       providerSourceId: ignored.sourceId, recoveredSourceId: resolved.sourceId },
     identityParts: [ignored.id, resolved.sourceId],
   });

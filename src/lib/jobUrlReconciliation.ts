@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isPaylocityPostingHost, paylocityPostingId, paylocityPostingsConflict } from './paylocityPostingIdentity';
 import { adpPostingIdentity, isAdpPostingHost } from './adpPostingIdentity';
 import { ukgReadyPage } from './ukgReadyUrl';
 import { Prisma, type Job } from './prismaClient';
@@ -43,6 +44,8 @@ export function urlPostingIdentity(value: string): string | null {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
+    if (isPaylocityPostingHost(value)) return paylocityPostingId(value)
+      ? generatePostingIdentity({ url: value }) : null;
     if (isAdpPostingHost(value)) return adpPostingIdentity(value)
       ? generatePostingIdentity({ url: value }) : null;
     // Valid Dayforce numbers can be shorter than the generic path-ID gate.
@@ -556,6 +559,9 @@ export async function previewDuplicateCardMerge(
   const inputs = await mergeInputsForJobs(tx, jobs);
   const plan = chooseDuplicateCardMergePlan(inputs, input.preferredId);
   plan.blockedReason = dayforceCardMergeConflict(first, second) || plan.blockedReason;
+  if (paylocityPostingsConflict(first.canonicalUrl || first.url, second.canonicalUrl || second.url)) {
+    plan.blockedReason = 'These are different Paylocity postings. Keep them as separate cards.';
+  }
   const cards = jobs.map((job, index): DuplicateMergeReviewCard => ({
     id: job.id,
     title: job.title,
@@ -648,6 +654,8 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
   route: 'paste_link' | 'card_merge';
   /** A link update must survive the duplicate-review detour unchanged. */
   url?: string;
+  /** Historical data repairs retain the chosen card's exact displayed scores. */
+  scorePolicy?: 'preserve_survivor';
 }): Promise<UrlReconciliation & { mergePlan: DuplicateCardMergePlan }> {
   if (input.redundantId === input.survivorId) throw new CardMergeRefused('A card cannot be merged into itself.');
   await lockJobUrlEdits(tx);
@@ -666,11 +674,22 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
   const jobs: [Job, Job] = [first, second];
   const identityConflict = dayforceCardMergeConflict(first, second);
   if (identityConflict) throw new CardMergeRefused(identityConflict);
+  if (paylocityPostingsConflict(first.canonicalUrl || first.url, second.canonicalUrl || second.url)) {
+    throw new CardMergeRefused('These are different Paylocity postings. Keep them as separate cards.');
+  }
   const mergeInputs = await mergeInputsForJobs(tx, jobs);
   const mergePlan = chooseDuplicateCardMergePlan(mergeInputs, input.redundantId);
   if (mergePlan.blockedReason) throw new CardMergeRefused(mergePlan.blockedReason);
   const survivor = jobs.find((job) => job.id === mergePlan.survivorId)!;
   const redundant = jobs.find((job) => job.id === mergePlan.redundantId)!;
+  if (input.scorePolicy === 'preserve_survivor') {
+    const original = mergeInputs.find(card => card.id === survivor.id)!;
+    for (const dimension of ['aim', 'experience'] as const) {
+      const source = original[dimension];
+      if (source) mergePlan[dimension] = { value: source.value, mode: 'preserved', sources: [source], writeDerivedEvent: false };
+    }
+    if (mergePlan.aim.writeDerivedEvent && mergePlan.experience.value !== null) mergePlan.experience.writeDerivedEvent = true;
+  }
 
   // The latest user choice outranks every source preference and survivor rule.
   // Without a user choice, retain the existing employer-link preference.
@@ -723,6 +742,7 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
     details: {
       actor: 'user', protected: true, derived: true, route: input.route,
       priorStatus: redundant.status, nextStatus: 'dismissed', duplicateOfJobId: survivor.id, reason,
+      priorPassReason: redundant.passReason,
       previousUrl: redundant.url, mergePlan,
       nextTailoringStaged: false,
     },

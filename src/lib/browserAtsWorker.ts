@@ -5,7 +5,7 @@ import type { BrowserContext } from 'playwright-core';
 import { publicAtsWorkerPlatforms, browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
 import { browserAtsTaskDefinition } from './ingestionTaskCatalog';
 import { claimDueIngestionTask, checkpointIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from './ingestionControl';
-import { countExternalIngestionOutcome, emptyExternalIngestionCounters, ingestExternalJob, persistExternalIngestionSourceRun } from './jobIngestion';
+import { countExternalIngestionOutcome, emptyExternalIngestionCounters, externalJobAlreadyObserved, ingestExternalJob, persistExternalIngestionSourceRun } from './jobIngestion';
 import { firstCollectionHealth } from './atsFirstCollectionAdmission';
 import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
 import { BrowserPostingEvidenceError, browserPostingSourceId, type BrowserPostingLink } from './browserAtsPosting';
@@ -180,7 +180,7 @@ export async function runBrowserAtsWorker(options: {
                             countExternalIngestionOutcome(counters, 'duplicate');
                         }
                         else {
-                            const known = await prisma.jobSourceObservation.findUnique({ where: { source_sourceId: { source, sourceId } }, select: { sourceId: true } });
+                            const known = await externalJobAlreadyObserved(source, sourceId);
                             const titleDecision = previewBrowserAtsListingTitle({ title: link.title, titleComplete: link.titleVerified === true });
                             const existingGeneric = /^(?:general application|join (?:our |the )?talent (?:pool|community)|open application|expression of interest)$/i.test(link.title);
                             if (known) {
