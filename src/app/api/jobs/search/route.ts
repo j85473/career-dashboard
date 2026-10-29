@@ -220,6 +220,12 @@ async function searchJobs(request: Request) {
     }
 
     const terms = query.split(/\s+/).filter(Boolean).slice(0, 8);
+    // A complete Dashboard job ID is a direct lookup, including when absent.
+    // Sending it through description/source-link searches can scan unrelated
+    // records for seconds before the indexed primary-key match ever runs.
+    const exactJobId = field === 'all' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(query)
+      ? query.toLowerCase()
+      : null;
     const resolvedSuppressionIds = status === 'log'
       && ['aim_fit', 'jd_failed', 'scoring_failed', 'action_needed'].includes(logTab)
       ? await currentAimSuppressedJobIds(prisma)
@@ -235,11 +241,12 @@ async function searchJobs(request: Request) {
       : status && ['inbox', 'tailoring', 'pending_af', 'applied', 'interviewing', 'cooldown', 'bookmarked', 'archived', 'expired', 'passed', 'dismissed'].includes(status)
         ? [status as AdvancedJobSearchStatus]
         : [];
-    const searchesDescriptions = field === 'description'
-      || (field === 'all' && !/^https?:\/\//i.test(query));
+    const searchesDescriptions = !exactJobId && (field === 'description'
+      || (field === 'all' && !/^https?:\/\//i.test(query)));
     const locationValues = locationFilter
       ? await jobLocationSearchValues(locationFilter, { AND: [
         scopedStatusCondition,
+        ...(exactJobId ? [{ id: exactJobId }] : []),
         companyCondition || (query && (field === 'title' || field === 'company')
           ? fieldSearchWhere(field, terms, [], query, []) : {}),
       ] }, prisma)
@@ -247,10 +254,10 @@ async function searchJobs(request: Request) {
     const descriptionMatchIds = companyCondition || !searchesDescriptions || !query
       ? []
       : await findJobIdsByDescription(query, descriptionStatuses, locationValues);
-    const sourceUrlMatchIds = query && !companyCondition && (field === 'url' || field === 'all')
+    const sourceUrlMatchIds = query && !exactJobId && !companyCondition && (field === 'url' || field === 'all')
       ? await jobSourceUrlMatchIds(query, prisma)
       : [];
-    const searchCondition: Prisma.JobWhereInput = companyCondition || (!query ? {} : fieldSearchWhere(
+    const searchCondition: Prisma.JobWhereInput = companyCondition || (exactJobId ? { id: exactJobId } : !query ? {} : fieldSearchWhere(
       field,
       terms,
       descriptionMatchIds,
