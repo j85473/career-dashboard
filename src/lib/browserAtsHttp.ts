@@ -1,3 +1,4 @@
+import { PaycomPublicHttp } from './paycomPublicHttp';
 import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
@@ -14,7 +15,7 @@ const signature = (links: BrowserPostingLink[]) => createHash('sha256').update(l
 const companyKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 const companyName = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 1
     && value.length < 200 && /[a-z]/i.test(value) && !/^(?:unknown(?: company)?|company|careers?|jobs?|paylocity)$/i.test(value.trim());
-export const canUseBrowserAtsHttp = (platform: string): boolean => platform === 'paylocity' || platform === 'icims';
+export const canUseBrowserAtsHttp = (platform: string): boolean => platform === 'paylocity' || platform === 'icims' || platform === 'paycom';
 export const canUseBrowserAtsHttpDetail = (platform: string): boolean => canUseBrowserAtsHttp(platform) || platform === 'brassring';
 
 function icimsListingUrl(value: string, board: string, page: number): URL | null {
@@ -56,8 +57,10 @@ export function publicPageData(html: string): Record<string, unknown> | null {
  * the caller can retain its existing browser path and durable sweep progress. */
 export class BrowserAtsHttpReader {
     private catalogues = new Map<string, PaylocityCatalogue>();
+    private paycom: PaycomPublicHttp;
     private brassring: BrassringHttpDetailReader;
     constructor(private check: () => Promise<void> = async () => {}, private fetcher: Fetcher = safeExternalFetch) {
+        this.paycom = new PaycomPublicHttp(check, fetcher);
         this.brassring = new BrassringHttpDetailReader(check, fetcher);
     }
 
@@ -113,6 +116,7 @@ export class BrowserAtsHttpReader {
         if (!canUseBrowserAtsHttp(platform) || browserAtsBoardFromUrl(platform, board) !== board
             || !Number.isSafeInteger(page) || page < 1 || page > 1000
             || pageUrl && browserAtsBoardFromUrl(platform, pageUrl) !== board) return null;
+        if (platform === 'paycom') return this.paycom.page(board, page, pageUrl);
         if (platform === 'paylocity') {
             // This is one complete publisher catalogue, not a synthetic page
             // series. Saved array offsets are unsafe if the publisher reorders
@@ -172,6 +176,7 @@ export class BrowserAtsHttpReader {
         await this.check();
         if (!canUseBrowserAtsHttpDetail(platform) || browserAtsBoardFromUrl(platform, board) !== board
             || browserPostingLink(platform, board, link.url)?.id !== link.id) return null;
+        if (platform === 'paycom') return this.paycom.detail(board, link);
         if (platform === 'brassring') return this.brassring.detail(board, link);
         const catalogue = platform === 'paylocity' ? await this.paylocityCatalogue(board) : null;
         if (platform === 'paylocity' && !catalogue?.links.some(item => item.id === link.id)) return null;

@@ -96,7 +96,7 @@ test('selection samples bounded recent completed turns and counts only eligible 
 });
 test('busy HTTP activity on a shared provider cannot starve its waiting browser fallback', async () => {
   const now = new Date();
-  const base: CrawlProviderHead = { platform: 'paycom', slug: 'board', queue: 'continuation', checkDay: 0, failCount: 0,
+  const base: CrawlProviderHead = { platform: 'brassring', slug: 'board', queue: 'continuation', checkDay: 0, failCount: 0,
     lastSynchronizedAt: null, readyBoards: 10000, averageTurnMs: 5000, providerLastStartedAt: new Date(now.getTime()-60000) };
   let shared: CrawlProviderHead = { ...base, platform: 'paylocity', readyBoards: 2, providerLastStartedAt: now,
     providerCursor: { crawlLaneStarts: { http: now.toISOString(), browser: new Date(now.getTime()-CRAWL_PROVIDER_MAX_WAIT_MS-1000).toISOString() } } };

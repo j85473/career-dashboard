@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import { crawlTimeOrder } from './crawlTimeBudget';
 import { nextCrawlBoard, nextCrawlRefreshAt } from './atsCrawlingSchedule';
 import { prisma } from './prisma';
 import { Prisma } from './prismaClient';
@@ -65,19 +67,19 @@ export async function runBrowserAtsWorker(options: {
     if (options.browserAllowed === false && platforms.some(platform => !publicAtsWorkerPlatforms(true).includes(platform)))
         throw Error('HTTP-only collection cannot claim boards that may require a browser');
     const lane = options.browserAllowed === false ? 'http' : 'browser';
-    const deadline = Date.now() + (options.budgetMs ?? 3 * 60000);
+    const deadline = Date.now() + (options.budgetMs ?? 6 * 60000);
     let stopped = false;
     const stop = () => { stopped = true; };
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
     let context = options.context, ownsContext = false, visited = 0;
-    const maxTurns = options.maxProviders ?? 24;
-    let retries = 0;
+    const maxTurns = options.maxProviders ?? 10000;
+    const spent = { first: 0, refresh: 0, continuation: 0, retry: 0 };
     const unavailablePlatforms = new Set<BrowserAtsPlatform>();
     const cycleStart = Math.floor(Date.now() / 60000) % 10;
     try {
         while (!stopped && Date.now() < deadline && visited < maxTurns) {
-            const selected = await nextCrawlBoard(platforms.filter(p => !unavailablePlatforms.has(p)), cycleStart + visited, retries < Math.max(1, Math.floor(maxTurns / 10)), options.boards, undefined, prisma, lane);
+            const selected = await nextCrawlBoard(platforms.filter(p => !unavailablePlatforms.has(p)), cycleStart + visited, spent.retry < (options.budgetMs ?? 6 * 60000) * 0.1, options.boards, undefined, prisma, lane, crawlTimeOrder(spent));
             if (!selected) break;
             const platform = selected.platform as BrowserAtsPlatform;
             const definition = browserAtsTaskDefinition(platform);
@@ -85,7 +87,7 @@ export async function runBrowserAtsWorker(options: {
             if (!claim) { unavailablePlatforms.add(platform); visited++; continue; }
             const laneCursor = crawlLaneCheckpoint(claim.task.cursor, lane, claim.task.lastStartedAt || new Date());
             visited++;
-            if (selected.queue === 'retry') retries++;
+            const turnStartedAt = Date.now();
             const boardDeadline = Math.min(deadline, Date.now() + 60000);
             let lastSafetyCheck = 0;
             const counters = emptyExternalIngestionCounters();
@@ -275,12 +277,14 @@ export async function runBrowserAtsWorker(options: {
                 }
             }
             finally {
+                spent[selected.queue] += Math.max(1, Date.now() - turnStartedAt);
                 if (reader)
                     await reader.close();
                 const owned = await prisma.ingestionTask.findFirst({ where: { id: claim.task.id, leaseToken: claim.leaseToken, status: 'running' }, select: { id: true } });
                 if (owned)
                     await persistExternalIngestionSourceRun({ checkpoint: { crawlQueue: selected.queue, board: board?.slug || null, complete, deferred, lane,
-                        scheduling: { readyBoards: selected.readyBoards || 0, averageTurnMs: selected.averageTurnMs ?? null },
+                        firstCollectionCompleted: complete && board?.lastSynchronizedAt === null,
+                        scheduling: { queueTimeMs: { ...spent }, readyBoards: selected.readyBoards || 0, averageTurnMs: selected.averageTurnMs ?? null },
                         ...(progress?.browserRequired ? { browserRequired: progress.browserRequired } : {}),
                         ...(retry ? { retry: { kind: retry.kind, nextRetryAt: retry.nextRetryAt.toISOString() } } : {}),
                         processed: progress?.seen.length || 0, cost, ...(progress?.terminal ? { terminal: asJson(progress.terminal), advertisedTotal: progress.total } : {}) }, source: definition.spec.source, counters, context: { taskId: claim.task.id, queryFamily: 'all', geoLane: 'source_posted_location', windowStart: claim.window.windowStart, windowEnd: claim.window.windowEnd, ingestionMode: 'public-board' }, startedAt: claim.task.lastStartedAt || new Date(), status: status === 'partial' ? 'partial' : undefined, error: errorMessage });
@@ -288,6 +292,8 @@ export async function runBrowserAtsWorker(options: {
                     await completeIngestionTask({ taskId: claim.task.id, taskKey: claim.task.taskKey, leaseToken: claim.leaseToken, status, counters, cadenceMs: 0, retryDelayMs: definition.intervalMs, continuationDelayMs: 0, jitterMaxMs: 0, watermarkAt: complete ? new Date() : undefined, error: errorMessage });
                 console.log(JSON.stringify({ queue: selected.queue, platform, board: board?.slug, page: progress?.page, processed: progress?.seen.length || 0, complete, deferred, inserted: counters.inserted, duplicates: counters.duplicates, filtered: counters.filtered, error: errorMessage }));
             }
+            // Bound same-group board starts even when public responses are very fast.
+            if (lane === 'http' && !stopped) await delay(Math.max(0, 500 - (Date.now() - turnStartedAt)));
         }
     }
     finally {

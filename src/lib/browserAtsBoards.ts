@@ -10,7 +10,7 @@ export const BROWSER_ATS_PLATFORMS = Object.keys(BROWSER_ATS_LABELS) as BrowserA
 // use the same durable board/task identities without occupying the browser seat.
 export const PUBLIC_ATS_HTTP_PLATFORMS: readonly BrowserAtsPlatform[] = ['adp'];
 /** These providers can hand an exact saved sweep to the browser when HTTP is insufficient. */
-export const PUBLIC_ATS_HTTP_FIRST_PLATFORMS: readonly BrowserAtsPlatform[] = ['paylocity', 'icims'];
+export const PUBLIC_ATS_HTTP_FIRST_PLATFORMS: readonly BrowserAtsPlatform[] = ['paylocity', 'icims', 'paycom'];
 export function publicAtsWorkerPlatforms(httpOnly = false): BrowserAtsPlatform[] {
     return BROWSER_ATS_PLATFORMS.filter(platform => httpOnly
         ? PUBLIC_ATS_HTTP_PLATFORMS.includes(platform) || PUBLIC_ATS_HTTP_FIRST_PLATFORMS.includes(platform)

@@ -533,3 +533,33 @@ already finish, and most newly discovered catalogues are unmeasured. A balanced
 plan is not proof of weekly capacity. Measure actual completion and detail-visit
 rates after activation before increasing browser concurrency or promising a
 seven-day coverage target.
+
+### Crawl capacity release (October 29, 2026)
+
+Public crawl sessions now stay warm for at most six minutes, retaining the
+60-second board deadline and graceful shutdown. The shared browser lock is
+released at the end of every session for Gusto and canonical resolution.
+Two disjoint HTTP provider groups run concurrently: ADP and the remaining
+HTTP-first providers. Each provider still has one fenced task lease.
+
+Elapsed board time targets 40% first collection, 30% refresh, 20% continuation
+and 10% retry per session; unavailable queues lend time to available work.
+Retries have a 10% session time ceiling, with at most one board-turn overshoot.
+The shares are scheduling targets, not completion guarantees.
+
+Initial unloaded HTTP-to-browser handoffs with a legacy discovery placeholder
+are first collections only when saved state and historical receipts show no
+genuine failure. This is a selection correction, not a database reset.
+No saved dates, posting IDs, scores or failure counters are rewritten.
+
+Paycom public HTTP collection accepts complete catalogues of at most 50 jobs,
+using anonymous credentials issued by the employer public page. Credentials
+stay in memory. Catalogue totals, unique job IDs, external visibility and
+matching employer details are verified; larger or uncertain boards retain
+browser collection. Existing browser traversals keep their pagination meaning.
+
+The receipt benchmark now separates distinct completed boards and first-ever
+completed collections from repeated completion turns. First-collection metrics
+require receipts from this release; older receipts are not inferred as zero
+first collections. Compare stable windows and provider mix before claiming a
+sustained speedup.

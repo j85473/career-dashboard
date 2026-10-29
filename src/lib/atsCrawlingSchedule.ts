@@ -43,18 +43,30 @@ export function selectFairCrawlBoard(heads: readonly CrawlProviderHead[], now = 
       || aTime - bTime || a.platform.localeCompare(b.platform);
   })[0] || null;
 }
-export async function nextCrawlBoard(platforms: readonly string[], turn: number, allowRetry: boolean, boards?: readonly string[], ownedTaskId?: string, client: Pick<PrismaClient, '$queryRaw'> = prisma, lane: PublicCrawlLane = 'all'): Promise<CrawlProviderHead | null> {
+export async function nextCrawlBoard(platforms: readonly string[], turn: number, allowRetry: boolean, boards?: readonly string[], ownedTaskId?: string, client: Pick<PrismaClient, '$queryRaw'> = prisma, lane: PublicCrawlLane = 'all', preferredQueues?: readonly CrawlQueue[]): Promise<CrawlProviderHead | null> {
   if (!platforms.length || boards && !boards.length) return null;
-  const order = crawlQueueOrder(turn, allowRetry);
+  const order = preferredQueues ? preferredQueues.filter(q => allowRetry || q !== 'retry') : crawlQueueOrder(turn, allowRetry);
   const rows = await client.$queryRaw<CrawlProviderHead[]>(Prisma.sql`
     -- Compute queue/ownership once. Inlining this CTE repeats the progress and
     -- open-work probes in each window sort/count across the entire due backlog.
-    WITH candidates AS MATERIALIZED (
+    WITH historical_failures AS MATERIALIZED (
+      SELECT DISTINCT source, checkpoint->'crawl'->>'board' AS slug
+      FROM "IngestionSourceRun"
+      WHERE "ingestionMode"='public-board' AND source IN ('ATS-icims','ATS-paylocity','ATS-paycom')
+        AND error IS NOT NULL AND COALESCE(checkpoint->'crawl'->>'deferred','false')='false'
+    ), candidates AS MATERIALIZED (
       SELECT board.slug,board.platform,board."checkDay",board."failCount",board."lastSynchronizedAt",board."nextCheckDate",board."lastAttemptedAt",t."lastStartedAt" AS "providerLastStartedAt",t.cursor AS "providerCursor",
         (ARRAY[${Prisma.join([...CRAWL_TURN_CYCLE])}]::text[])[mod(t.attempt+${ownedTaskId ? turn : 0},${CRAWL_TURN_CYCLE.length})+1] AS preferred_queue,
         CASE WHEN s.status IN ('partial','running') AND s."lastError" IS NULL
             AND (s.cursor->>'loaded'='true' OR CASE WHEN jsonb_typeof(s.cursor->'seen')='array' THEN jsonb_array_length(s.cursor->'seen') ELSE 0 END>0) THEN 'continuation'
           WHEN ${Prisma.raw(CRAWL_PENDING_DISCOVERY_SQL)} THEN 'first'
+          WHEN board.platform IN ('icims','paylocity','paycom') AND board.status='parked'
+            AND board."failCount"=1 AND board."retryCount"=0 AND board."lastSynchronizedAt" IS NULL
+            AND s.status='partial' AND s."lastError" IS NULL AND s.cursor->>'browserRequired'='listing'
+            AND s.cursor->>'page'='1' AND s.cursor->>'loaded'='false'
+            AND s.cursor->'seen'='[]'::jsonb AND s.cursor->'queue'='[]'::jsonb
+            AND NOT EXISTS (SELECT 1 FROM historical_failures h WHERE h.source=t.source AND h.slug=board.slug)
+            THEN 'first'
           WHEN board."failCount">0 OR s."lastError" IS NOT NULL THEN 'retry'
           WHEN board."lastSynchronizedAt" IS NULL THEN 'first' ELSE 'refresh' END AS queue
       FROM "AtsCompany" board LEFT JOIN "AtsBrowserSweep" s ON s.platform=board.platform AND s.slug=board.slug
@@ -68,7 +80,7 @@ export async function nextCrawlBoard(platforms: readonly string[], turn: number,
         ${boards ? Prisma.sql`AND board.slug IN (${Prisma.join([...boards])})` : Prisma.empty}
     ), ranked AS (
       SELECT *,COUNT(*) OVER (PARTITION BY platform)::int AS "readyBoards",ROW_NUMBER() OVER (PARTITION BY platform ORDER BY
-        CASE WHEN queue=preferred_queue THEN 0 ELSE array_position(ARRAY['continuation','refresh','first','retry']::text[],queue) END,
+        ${preferredQueues ? Prisma.sql`array_position(ARRAY[${Prisma.join(order)}]::text[],queue)` : Prisma.sql`CASE WHEN queue=preferred_queue THEN 0 ELSE array_position(ARRAY['continuation','refresh','first','retry']::text[],queue) END`},
         "nextCheckDate","lastAttemptedAt" NULLS FIRST,slug) AS board_rank
       FROM candidates WHERE queue IN (${Prisma.join(order)})
     ) SELECT slug,platform,"checkDay","failCount","lastSynchronizedAt",queue,"providerLastStartedAt","providerCursor","readyBoards",
@@ -83,7 +95,9 @@ export async function nextCrawlBoard(platforms: readonly string[], turn: number,
       )`} AS "averageTurnMs"
     FROM ranked WHERE board_rank=1
   `);
-  return selectFairCrawlBoard(rows.map(row => lane !== 'all' && PUBLIC_ATS_HTTP_FIRST_PLATFORMS.includes(row.platform as BrowserAtsPlatform)
+  const preferred = preferredQueues && order.find(queue => rows.some(row => row.queue === queue));
+  const eligibleRows = preferred ? rows.filter(row => row.queue === preferred) : rows;
+  return selectFairCrawlBoard(eligibleRows.map(row => lane !== 'all' && PUBLIC_ATS_HTTP_FIRST_PLATFORMS.includes(row.platform as BrowserAtsPlatform)
     ? { ...row, providerLastStartedAt: crawlLaneStart(row.providerCursor, lane) }
     : row));
 }

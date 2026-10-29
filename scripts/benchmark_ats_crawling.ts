@@ -6,7 +6,7 @@ import { NON_API_ATS_PLATFORMS } from '../src/lib/browserAtsBoards';
 const costKeys=['listingMs','detailMs','ingestionMs','httpListings','httpDetails','browserListings','browserDetails','knownBeforeDetail','titleRejectedBeforeDetail'] as const;
 type CostKey=typeof costKeys[number];
 type CostTotals=Record<CostKey,number|null>&{instrumentedTurns:number};
-type ThroughputTotals={turns:number;postings:number;inserted:number;duplicates:number;filtered:number;errors:number;completed:number};
+type ThroughputTotals={firstCollections:number;distinctCompleted:number;turns:number;postings:number;inserted:number;duplicates:number;filtered:number;errors:number;completed:number};
 type BenchmarkRow=ThroughputTotals&CostTotals&{source:string;seconds:number};
 async function main() {
   const args=process.argv.slice(2);
@@ -28,7 +28,10 @@ async function main() {
         WHERE jsonb_typeof(cost->metric.key) IS DISTINCT FROM 'number'
       ) AS instrumented FROM window_runs
     )
-    SELECT source,count(*)::int AS turns,COALESCE(sum("seenCount"),0)::int AS postings,
+    SELECT source,
+      count(*) FILTER(WHERE checkpoint->'crawl'->>'firstCollectionCompleted'='true')::int AS "firstCollections",
+      count(DISTINCT checkpoint->'crawl'->>'board') FILTER(WHERE checkpoint->'crawl'->>'complete'='true')::int AS "distinctCompleted",
+      count(*)::int AS turns,COALESCE(sum("seenCount"),0)::int AS postings,
       COALESCE(sum("insertedCount"),0)::int AS inserted,COALESCE(sum("duplicateCount"),0)::int AS duplicates,
       COALESCE(sum("filteredCount"),0)::int AS filtered,count(*) FILTER(WHERE "requestErrorCount">0 OR "processingErrorCount">0)::int AS errors,
       COALESCE(sum(CASE WHEN checkpoint->'crawl'->>'complete'='true' THEN 1 ELSE 0 END+COALESCE((checkpoint->'crawl'->>'completedBoards')::int,0)),0)::int AS completed,
@@ -47,11 +50,11 @@ async function main() {
   `);
   const legacy=await prisma.atsCompany.count({where:{platform:{in:[...NON_API_ATS_PLATFORMS]},lastSynchronizedAt:{gte:since,lte:until}}});
   const totals=rows.reduce<ThroughputTotals&CostTotals>((a,r)=>{
-    a.turns+=r.turns;a.postings+=r.postings;a.inserted+=r.inserted;a.duplicates+=r.duplicates;
+    a.firstCollections+=r.firstCollections;a.distinctCompleted+=r.distinctCompleted;a.turns+=r.turns;a.postings+=r.postings;a.inserted+=r.inserted;a.duplicates+=r.duplicates;
     a.filtered+=r.filtered;a.errors+=r.errors;a.completed+=r.completed;a.instrumentedTurns+=r.instrumentedTurns;
     for(const key of costKeys)if(r[key]!==null)a[key]=(a[key]??0)+r[key];
     return a;
-  },{turns:0,postings:0,inserted:0,duplicates:0,filtered:0,errors:0,completed:0,instrumentedTurns:0,
+  },{firstCollections:0,distinctCompleted:0,turns:0,postings:0,inserted:0,duplicates:0,filtered:0,errors:0,completed:0,instrumentedTurns:0,
     listingMs:null,detailMs:null,ingestionMs:null,httpListings:null,httpDetails:null,browserListings:null,browserDetails:null,knownBeforeDetail:null,titleRejectedBeforeDetail:null});
   const hours=(+until-+since)/3600000;
   const result={since:since.toISOString(),until:until.toISOString(),windowMinutes:hours*60,totals,legacyLatestBoardCompletions:legacy,rates:{postingsPerHour:totals.postings/hours,completedBoardsPerHour:totals.completed/hours,insertedPerHour:totals.inserted/hours},sources:rows,note:'Counts only durable completed turns inside the explicit wall-clock window. Old releases lack per-turn completion receipts; their latest-board completion count is separate. Cost and transport fields sum only turns with complete numeric cost instrumentation, counted by instrumentedTurns; null means no instrumented turns, and missing older metrics are unknown. Live windows may have different board mixes.'};
