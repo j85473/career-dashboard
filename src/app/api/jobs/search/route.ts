@@ -12,7 +12,7 @@ import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
 import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
-import { withApplicationDates } from '@/lib/jobApplicationDate';
+import { withJobApplicationContext } from '@/lib/jobApplicationContext';
 import { jobSourceUrlMatchIds, jobUrlSearchWhere } from '@/lib/jobUrlSearch';
 import { jobLocationSearchValues, LocationSearchError, resolveJobLocationFilter } from '@/lib/jobLocationSearch';
 import {
@@ -318,7 +318,7 @@ async function searchJobs(request: Request) {
         prisma.job.count({ where }),
       ]);
     const latestScores = await latestJobScoreEvents(jobs.map((job) => job.id));
-    const datedJobs = await withApplicationDates(jobs);
+    const datedJobs = await withJobApplicationContext(jobs);
     const authoritativeJobs = datedJobs.map((job) => (
       projectJobListScoreAuthority(job, latestScores.get(job.id) || null)
     ));

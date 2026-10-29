@@ -23,7 +23,7 @@ import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
-import { withApplicationDates } from '@/lib/jobApplicationDate';
+import { withJobApplicationContext } from '@/lib/jobApplicationContext';
 import {
   isManualScoringQueueTab,
   manualScoringCombinedOrderedPage,
@@ -134,7 +134,7 @@ async function getJobs(request: Request) {
       ]);
 
     const latestScores = await latestJobScoreEvents(pageJobs.map((job) => job.id));
-    const datedJobs = await withApplicationDates(pageJobs);
+    const datedJobs = await withJobApplicationContext(pageJobs);
     const jobs = datedJobs.map((job) => (
       projectJobListScoreAuthority(job, latestScores.get(job.id) || null)
     ));

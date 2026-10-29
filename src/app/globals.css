@@ -1404,6 +1404,8 @@ body {
 .repeat-notice > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .repeat-notice span { color: var(--muted); }
 .repeat-notice .expand-btn { flex-shrink: 0; height: 32px; padding: 0 14px; }
+.combined-copy-notice { flex-wrap: wrap; }
+.combined-copy-notice > div { flex: 1 1 300px; }
 .repeat-list { display: block; margin-top: 12px; }
 .repeat-list summary { cursor: pointer; font-weight: 600; }
 .repeat-list ul { margin: 8px 0; padding-left: 18px; color: var(--text); }

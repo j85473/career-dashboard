@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Bookmark, CheckCircle, XCircle, ExternalLink, AlertTriangle, Edit2, Loader2, Save, Copy } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { showAlert, showConfirm, showOptions } from '@/lib/modal';
@@ -12,15 +12,13 @@ import { companyDisplayName } from '@/lib/companyPresentation';
 import { CompanyLogo } from '@/components/CompanyLogo';
 import { employerAliasKey } from '@/lib/employerIdentity';
 import { ALREADY_APPLIED_REASON, isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
+import { consolidatedIntoJobId } from '@/lib/jobConsolidationReason';
 
 type HiddenRepeat = { id: string; title: string; company: string; location: string | null; source: string | null; dismissedAt: string };
 type CombinedCopy = {
   id: string; title: string; company: string; location: string | null; source: string | null; url: string | null;
   aimFitScore: number | null; reqFitScore: number | null; combinedAt: string; automatic: boolean;
 };
-/** Mirrors CONSOLIDATED_REASON_PREFIX (src/lib/jobUrlReconciliation.ts), which is server-only. */
-const COMBINED_REASON_PREFIX = 'Consolidated after URL edit into job ';
-
 type DuplicateMergeReviewCard = {
   id: string;
   title: string;
@@ -64,6 +62,7 @@ interface ExpandOverlayProps {
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
   onJobUpdate?: (id: string, updates: Partial<JobListItem>) => void;
   onCompanySelect: (company: string) => void;
+  onSelectJob?: (job: JobListItem) => void;
   primaryScore?: 'aim' | 'experience';
 }
 
@@ -107,7 +106,7 @@ const evidenceIds = (leaf: Record<string, unknown>) => [...asRecords(leaf.suppor
 
 
 
-export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, onCompanySelect, primaryScore = 'aim' }: ExpandOverlayProps) {
+export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, onCompanySelect, onSelectJob, primaryScore = 'aim' }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
   const companyLabel = job.employer || companyDisplayName(job.company, job.source);
@@ -140,6 +139,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [mergeError, setMergeError] = useState('');
   const [mergeCompleted, setMergeCompleted] = useState('');
   const [linkUpdateError, setLinkUpdateError] = useState('');
+  const [openingCombinedCard, setOpeningCombinedCard] = useState(false);
   const isApplicationCard = job?.status === 'applied' || job?.status === 'interviewing';
 
   // An applied card lists the copies that were hidden because they repeat it,
@@ -159,7 +159,21 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   }, [job?.id, isApplicationCard]);
 
   // Any card can hold copies of the same job that arrived from other sources.
-  const isCombinedCopy = job.status === 'dismissed' && Boolean(job.passReason?.startsWith(COMBINED_REASON_PREFIX));
+  const isCombinedCopy = job.status === 'dismissed' && consolidatedIntoJobId(job.passReason) !== null;
+  const openCombinedCard = async () => {
+    if (!job.combinedInto || !onSelectJob) return;
+    setOpeningCombinedCard(true);
+    try {
+      const response = await fetch(`/api/jobs/${job.combinedInto.id}`);
+      const data = await response.json();
+      if (!response.ok || !data.job) throw new Error(data.error || 'The saved card could not be opened.');
+      onSelectJob(data.job);
+    } catch (error) {
+      await showAlert(error instanceof Error ? error.message : 'The saved card could not be opened.');
+    } finally {
+      setOpeningCombinedCard(false);
+    }
+  };
   React.useEffect(() => {
     if (!job?.id || isCombinedCopy) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -1062,11 +1076,20 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         </div>
       )}
       {isCombinedCopy && (
-        <div className="repeat-notice" role="status">
+        <div className="repeat-notice combined-copy-notice" role="status">
           <div>
-            <strong>Combined into another card as the same job</strong>
-            <span>This listing came from another source. Its scores are kept; the other card is the one you see.</span>
+            <strong>{job.combinedInto?.alreadyApplied
+              ? `Already applied${job.combinedInto.appliedAt ? ` · ${format(new Date(job.combinedInto.appliedAt), 'MMM d, yyyy')}` : ''}`
+              : 'Combined into another card as the same job'}</strong>
+            <span>{job.combinedInto?.alreadyApplied
+              ? `This is a copy of ${job.combinedInto.title} at ${job.combinedInto.company}. Your application is saved on the original card; this copy keeps its own scores.`
+              : 'This listing came from another source. Its scores are kept on this copy.'}</span>
           </div>
+          {job.combinedInto && onSelectJob && (
+            <button className="expand-btn primary" onClick={() => void openCombinedCard()} disabled={openingCombinedCard}>
+              {openingCombinedCard ? 'Opening…' : job.combinedInto.alreadyApplied ? 'View application' : 'View saved card'}
+            </button>
+          )}
           <button className="expand-btn" onClick={() => void handleSeparate(job.id)} disabled={separatingId !== null}>
             {separatingId === job.id ? <Loader2 size={14} className="animate-spin" /> : 'Not the same job'}
           </button>
@@ -1266,7 +1289,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           )}
 
           {/* Promote Button (Dismissed only) */}
-          {job.status === 'dismissed' && (
+          {job.status === 'dismissed' && !isCombinedCopy && (
             <button className="expand-btn primary" onClick={handlePromote} style={{ height: '36px', padding: '0 16px', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }}>
               <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
               Promote to Inbox

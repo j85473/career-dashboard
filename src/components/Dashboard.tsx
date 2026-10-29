@@ -1127,7 +1127,9 @@ export default function Dashboard() {
         
         {selectedJob && (
           <ExpandOverlay
+            key={selectedJob.id}
             job={selectedJob}
+            onSelectJob={setSelectedJob}
             onClose={() => setSelectedJob(null)}
             onStatusChange={handleStatusChange}
             onToggleTailoring={handleToggleTailoring}

@@ -36,7 +36,8 @@ export class JobUrlConflict extends Error {
   }
 }
 
-export const CONSOLIDATED_REASON_PREFIX = 'Consolidated after URL edit into job ';
+export { CONSOLIDATED_REASON_PREFIX } from './jobConsolidationReason';
+import { CONSOLIDATED_REASON_PREFIX } from './jobConsolidationReason';
 
 // Only posting-specific identities may cause a lifecycle change. In particular,
 // a Lever/Greenhouse board or a generic careers page is never sufficient proof.

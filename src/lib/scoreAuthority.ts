@@ -1,6 +1,7 @@
 import { travelRangeFromScorePayload, type TravelRange } from './nativeScoringPacket';
 import { aimDisplayFromAssessment, type AimDisplayBand } from './aimDisplay';
 import { isAppliedDuplicateReason } from './appliedDuplicatePolicy';
+import { consolidatedIntoJobId } from './jobConsolidationReason';
 
 export const LEGACY_SCORE_EVENT_TYPES = ['standard', 'ae_fit'] as const;
 export const STAGED_SCORE_EVENT_TYPES = ['aim_fit', 'experience_fit'] as const;
@@ -366,6 +367,7 @@ export function projectJobScoreAuthority<
   const humanDecisionReason = job.status === 'passed'
     || /^Promoted by user:/i.test(job.passReason || '')
     || isAppliedDuplicateReason(job.passReason)
+    || consolidatedIntoJobId(job.passReason) !== null
     ? job.passReason
     : null;
 

@@ -11,6 +11,7 @@ import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimScoreFillClass } from '@/lib/aimDisplay';
 import { isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
+import { consolidatedIntoJobId } from '@/lib/jobConsolidationReason';
 import { companyDisplayName } from '@/lib/companyPresentation';
 import { CompanyLogo } from '@/components/CompanyLogo';
 
@@ -68,7 +69,8 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   // Dismissed because it repeats a job already decided on. Badged rather than
   // hidden silently, so a wrong fingerprint match is visible when browsing
   // dismissed instead of quietly costing an opportunity.
-  const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason);
+  const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason) || job.combinedInto?.alreadyApplied;
+  const isCombinedCopy = consolidatedIntoJobId(job.passReason) !== null;
   const companyLabel = job.employer || companyDisplayName(job.company, job.source);
 
   const updateJob = async (updates: Partial<JobListItem>) => {
@@ -224,8 +226,11 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           )}
           {isAppliedDuplicate && (
             <div className="applied-duplicate-badge" title={job.passReason || undefined}>
-              Already applied
+              Already applied{job.combinedInto?.appliedAt ? ` · ${format(new Date(job.combinedInto.appliedAt), 'MMM d, yyyy')}` : ''}
             </div>
+          )}
+          {isCombinedCopy && !isAppliedDuplicate && (
+            <div className="job-status-badge">Combined with another card</div>
           )}
           {travelTier === 'priority' && (
             <div className="travel-priority-badge">Travel priority</div>

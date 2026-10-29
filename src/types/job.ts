@@ -72,6 +72,15 @@ export interface JobListItem {
   updatedAt?: string;
   /** Original Applied event in the current application, independent of later edits. */
   appliedAt?: string | null;
+  /** Saved card this duplicate was combined into; application evidence stays on that card. */
+  combinedInto?: {
+    id: string;
+    title: string;
+    company: string;
+    status: string;
+    alreadyApplied: boolean;
+    appliedAt: string | null;
+  } | null;
   contextBatched?: boolean;
   afBatchId?: string | null;
   jdBatchId?: string | null;

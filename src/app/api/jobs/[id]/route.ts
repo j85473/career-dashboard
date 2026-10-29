@@ -29,7 +29,7 @@ import { parkSameCompanyInboxJobs, resolveInboxAdmission, recordAppliedRepostAdm
 import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { presentJobDescription } from '@/lib/jobDescriptionPresentation';
-import { withApplicationDates } from '@/lib/jobApplicationDate';
+import { withJobApplicationContext } from '@/lib/jobApplicationContext';
 import { userCanonicalJobUrlFields } from '@/lib/userCanonicalJobUrl';
 
 
@@ -86,7 +86,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
   const latestScores = await latestJobScoreEvents([job.id]);
   const projected = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
-  const [datedJob] = await withApplicationDates([projected]);
+  const [datedJob] = await withJobApplicationContext([projected]);
 
   return NextResponse.json({
     job: {
@@ -444,7 +444,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     
     const latestScores = await latestJobScoreEvents([job.id]);
     const authoritativeJob = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
-    const [datedJob] = await withApplicationDates([authoritativeJob]);
+    const [datedJob] = await withJobApplicationContext([authoritativeJob]);
     return NextResponse.json({
       job: datedJob,
       rescoreQueued: mutation.consolidatedJobId ? false : shouldQueueRescore,
