@@ -42,6 +42,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const intoJobId = typeof body.intoJobId === 'string' ? body.intoJobId : '';
   const route = body.route === 'paste_link' ? 'paste_link' : 'card_merge';
   if (!intoJobId) return NextResponse.json({ error: 'intoJobId is required' }, { status: 400 });
+  const selectedSurvivorId = body.selectedSurvivorId;
+  if (selectedSurvivorId !== undefined && (typeof selectedSurvivorId !== 'string' || ![id, intoJobId].includes(selectedSurvivorId))) {
+    return NextResponse.json({ error: 'Choose one of the two cards to merge into.' }, { status: 400 });
+  }
   let url: string | undefined;
   if (body.url !== undefined) {
     try {
@@ -54,7 +58,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const merged = await mergeDuplicateCards(tx, { redundantId: id, survivorId: intoJobId, route, url });
+      const merged = await mergeDuplicateCards(tx, { redundantId: id, survivorId: intoJobId, selectedSurvivorId, route, url });
       await assertJobLifecycleInvariants(tx, [id, intoJobId]);
       return merged;
     });

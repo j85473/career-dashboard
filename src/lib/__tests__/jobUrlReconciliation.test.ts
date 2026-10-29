@@ -476,6 +476,105 @@ test('merging keeps protected application work and refuses only two submitted rÃ
   );
 });
 
+for (const status of ['archived', 'dismissed', 'passed', 'expired']) {
+  for (const selectedSide of ['current', 'other']) {
+    test(`explicit merge into the ${selectedSide} ${status} card keeps its decision, scores and supplied link`, async () => {
+      const inbox = row({ id: 'inbox', tailoringStaged: true });
+      const destination = row({ id: 'destination', status, passReason: 'Location mismatch', url: directUrl });
+      const f = fixture([inbox, destination], [scoreRow({ id: 'inbox-scores', jobId: inbox.id, aim: 88, experience: 84 })]);
+      const preview = await previewDuplicateCardMerge(f.tx, {
+        firstId: selectedSide === 'current' ? destination.id : inbox.id,
+        secondId: selectedSide === 'current' ? inbox.id : destination.id,
+        preferredId: inbox.id,
+      });
+      assert.equal(preview.plan.survivorId, inbox.id, 'automatic callers retain their existing behavior');
+      const selected = preview.selectionPlans[destination.id];
+      assert.equal(selected.survivorStatus, status);
+      assert.equal(selected.blockedReason, null);
+      assert.equal(selected.aim.value, 88);
+      assert.equal(selected.experience.value, 84);
+
+      const result = await mergeDuplicateCards(f.tx, {
+        redundantId: selectedSide === 'current' ? destination.id : inbox.id,
+        survivorId: selectedSide === 'current' ? inbox.id : destination.id,
+        selectedSurvivorId: destination.id,
+        route: 'card_merge', url: directUrl,
+      });
+      assert.deepEqual(result.mergePlan, selected, 'the write honors the reviewed destination and scores');
+      assert.equal(result.job.id, destination.id);
+      assert.equal(result.job.status, status);
+      assert.equal(result.job.passReason, 'Location mismatch');
+      assert.equal(result.job.tailoringStaged, false);
+      assert.equal(result.job.url, directUrl);
+      assert.equal(result.job.userCanonicalUrl, directUrl);
+      assert.equal(result.job.aimFitScore, 88);
+      assert.equal(result.job.reqFitScore, 84);
+      assert.equal(result.consolidatedJobId, inbox.id);
+      assert.equal(f.saved.get(inbox.id)?.status, 'dismissed');
+      assert.equal(f.saved.get(inbox.id)?.aimFitScore, 88, 'original scores remain on retained history');
+      assert.deepEqual(f.scoreEvents.map(event => event.evaluationType), ['duplicate_merge_aim', 'duplicate_merge_experience']);
+      assert.deepEqual(f.movedAttachments, [{ where: { jobId: inbox.id }, data: { jobId: destination.id } }]);
+      assert.equal((f.events[1].details as Record<string, unknown>).nextStatus, status);
+
+      // Check the real lifecycle reader against the decisions emitted by this merge.
+      const records = () => [...f.saved.values()].map(job => ({
+        ...job,
+        pipelineEvents: f.events.filter(event => event.jobId === job.id).map((event, index) => ({
+          ...event, id: `event-${index}`, eventType: String(event.eventType), occurredAt: event.occurredAt as Date,
+        })),
+        _count: { scoreEvents: 0 },
+      }));
+      f.tx.job.findMany = (async ({ where }: { where: Record<string, unknown> }) => records()
+        .filter(record => matchesWhere(record, where))) as unknown as typeof f.tx.job.findMany;
+      Object.assign(f.tx, { aimScoringFailureReceipt: { findMany: async () => [] } });
+      await assertJobLifecycleInvariants(f.tx, [inbox.id, destination.id]);
+    });
+  }
+}
+
+test('explicit destination can keep the current card even when automatic ranking prefers the other card', async () => {
+  const current = row({ id: 'current', status: 'archived' });
+  const other = row({ id: 'other', status: 'inbox' });
+  const f = fixture([current, other]);
+  const result = await mergeDuplicateCards(f.tx, {
+    redundantId: current.id, survivorId: other.id, selectedSurvivorId: current.id, route: 'card_merge',
+  });
+  assert.equal(result.job.id, current.id);
+  assert.equal(result.job.status, 'archived');
+  assert.equal(result.consolidatedJobId, other.id);
+});
+
+test('a merge choice cannot discard a protected application or name an unrelated card', async () => {
+  for (const overrides of [
+    { status: 'applied' }, { status: 'interviewing' },
+    { status: 'passed', passReason: 'Already applied' }, { submittedResume: 'submitted.docx' },
+  ]) {
+    const f = fixture([row({ id: 'application', ...overrides }), row({ id: 'archived', status: 'archived' })]);
+    const preview = await previewDuplicateCardMerge(f.tx, { firstId: 'application', secondId: 'archived', preferredId: 'application' });
+    assert.match(preview.selectionPlans.archived.blockedReason || '', /protected application/);
+    await assert.rejects(mergeDuplicateCards(f.tx, {
+      redundantId: 'application', survivorId: 'archived', selectedSurvivorId: 'archived', route: 'card_merge',
+    }), /protected application/);
+    assert.equal(f.writes.length, 0);
+  }
+  const f = fixture([row({ id: 'first' }), row({ id: 'second' })]);
+  await assert.rejects(mergeDuplicateCards(f.tx, {
+    redundantId: 'first', survivorId: 'second', selectedSurvivorId: 'unrelated', route: 'card_merge',
+  }), /Choose one of the two cards/);
+  assert.equal(f.writes.length, 0);
+});
+
+test('a destination choice is rechecked against application work added after the preview', async () => {
+  const f = fixture([row({ id: 'inbox' }), row({ id: 'archived', status: 'archived' })]);
+  const preview = await previewDuplicateCardMerge(f.tx, { firstId: 'inbox', secondId: 'archived', preferredId: 'inbox' });
+  assert.equal(preview.selectionPlans.archived.blockedReason, null);
+  f.saved.get('inbox')!.submittedResume = 'just-submitted.docx';
+  await assert.rejects(mergeDuplicateCards(f.tx, {
+    redundantId: 'inbox', survivorId: 'archived', selectedSurvivorId: 'archived', route: 'card_merge',
+  }), /protected application/);
+  assert.equal(f.writes.length, 0);
+});
+
 // Evaluate the scalar/relation filters used by the real queue and invariant
 // readers against the rows/events written by the merge fixture.
 function matchesWhere(record: Record<string, unknown>, where: Record<string, unknown>): boolean {

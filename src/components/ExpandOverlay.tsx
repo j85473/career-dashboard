@@ -45,6 +45,7 @@ type DuplicateMergeReview = {
   conflictMessage: string;
   linkUpdate?: { url: string; linkOnly: boolean };
   cards: [DuplicateMergeReviewCard, DuplicateMergeReviewCard];
+  selectionPlans: Record<string, DuplicateMergeReview['plan']>;
   plan: {
     survivorId: string;
     redundantId: string;
@@ -458,11 +459,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     setLinkUpdateError('');
     const res = await fetch(`/api/jobs/${job.id}/merge?withJobId=${encodeURIComponent(targetJobId)}`);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.cards || !data.plan) {
+    if (!res.ok || !data.cards || !data.plan || !data.selectionPlans?.[data.plan.survivorId]) {
       setLinkUpdateError(data.error || 'The two-card merge review could not be loaded. No changes were saved.');
       return;
     }
-    setMergeReview({ ...data, conflictMessage, linkUpdate });
+    setMergeReview({ ...data, plan: data.selectionPlans[data.plan.survivorId], conflictMessage, linkUpdate });
   };
 
   const handleMergeReview = async () => {
@@ -471,11 +472,18 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (!other) return;
     setMergeBusy(true);
     setMergeError('');
-    const res = await fetch(`/api/jobs/${job.id}/merge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intoJobId: other.id, route: 'card_merge', url: mergeReview.linkUpdate?.url }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/api/jobs/${job.id}/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intoJobId: other.id, selectedSurvivorId: mergeReview.plan.survivorId, route: 'card_merge', url: mergeReview.linkUpdate?.url }),
+      });
+    } catch {
+      setMergeError('The merge response could not be received. Reload the card to check whether the merge completed before trying again.');
+      setMergeBusy(false);
+      return;
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       setMergeError(data.error || 'The cards could not be merged. Nothing was changed.');
@@ -799,21 +807,37 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               <h2 id="duplicate-merge-title">Review these two cards</h2>
               <p>{mergeReview.conflictMessage}</p>
             </div>
-            <button className="expand-close" onClick={() => setMergeReview(null)} aria-label="Cancel duplicate merge">✕</button>
+            <button className="expand-close" onClick={() => setMergeReview(null)} disabled={mergeBusy} aria-label="Cancel duplicate merge">✕</button>
           </div>
 
           <div className="duplicate-merge-content">
-            <div className="duplicate-merge-grid">
+            <p id="duplicate-merge-choice-help" className="duplicate-merge-choice-help">Choose which card to merge into. The selected card keeps its status.</p>
+            <div className="duplicate-merge-grid" role="radiogroup" aria-label="Card to merge into" aria-describedby="duplicate-merge-choice-help">
               {mergeReview.cards.map((card) => {
                 const survives = card.id === mergeReview.plan.survivorId;
                 return (
                   <article className={`duplicate-merge-card ${survives ? 'survivor' : 'redundant'}`} key={card.id}>
                     <div className="duplicate-merge-card-heading">
-                      <span>{survives ? 'Surviving card' : 'Will be consolidated'}</span>
+                      <span>{survives ? 'Merge into this card' : 'Will be consolidated'}</span>
                       <strong>{card.status.replaceAll('_', ' ')}</strong>
                     </div>
                     <h3>{card.title}</h3>
                     <p>{companyDisplayName(card.company, card.source)} · {card.location || 'Location not provided'}</p>
+                    <label className="duplicate-merge-choice">
+                      <input
+                        type="radio"
+                        name="merge-destination"
+                        checked={survives}
+                        disabled={mergeBusy || Boolean(mergeReview.selectionPlans[card.id].blockedReason)}
+                        onChange={() => {
+                          setMergeError('');
+                          setMergeReview({ ...mergeReview, plan: mergeReview.selectionPlans[card.id] });
+                        }}
+                        aria-label={`Merge into ${card.title}, keep ${card.status.replaceAll('_', ' ')} status`}
+                      />
+                      <span>Keep this card · {card.status.replaceAll('_', ' ')}</span>
+                    </label>
+                    {mergeReview.selectionPlans[card.id].blockedReason && <div className="duplicate-merge-protection">{mergeReview.selectionPlans[card.id].blockedReason}</div>}
                     {companyDisplayName(card.company, card.source) !== card.company && <small>Listed employer: {card.company}</small>}
                     <dl>
                       <div><dt>Aim Fit</dt><dd>{card.aimFitScore ?? 'No score'}</dd></div>
@@ -831,6 +855,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             <div className="duplicate-merge-result" role="status">
               <strong>What Merge will do</strong>
               <span>{mergeReview.plan.survivorReason}</span>
+              <span className="duplicate-merge-status-result">Final status: {mergeReview.plan.survivorStatus.replaceAll('_', ' ')}</span>
               {mergeReview.linkUpdate && <span>Your supplied link will become the canonical link. Its posting details will refresh after the merge.</span>}
               <span>{scoreResult('Aim Fit', mergeReview.plan.aim)}</span>
               <span>{scoreResult('Experience Fit', mergeReview.plan.experience)}</span>

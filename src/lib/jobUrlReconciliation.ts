@@ -463,8 +463,12 @@ function mergeScorePlan(
 export function chooseDuplicateCardMergePlan(
   cards: readonly [DuplicateMergeCardInput, DuplicateMergeCardInput],
   preferredId: string,
+  selectedSurvivorId?: string,
 ): DuplicateCardMergePlan {
   const [left, right] = cards;
+  if (selectedSurvivorId !== undefined && !cards.some(card => card.id === selectedSurvivorId)) {
+    throw new CardMergeRefused('Choose one of the two cards to merge into.');
+  }
   if (left.submittedResume && right.submittedResume) {
     return {
       survivorId: preferredId,
@@ -476,9 +480,18 @@ export function chooseDuplicateCardMergePlan(
       experience: { value: null, mode: 'none', sources: [], writeDerivedEvent: false },
     };
   }
-  const survivor = compareMergeCards(left, right, preferredId) >= 0 ? left : right;
+  const survivor = selectedSurvivorId !== undefined
+    ? cards.find(card => card.id === selectedSurvivorId)!
+    : compareMergeCards(left, right, preferredId) >= 0 ? left : right;
   const redundant = survivor.id === left.id ? right : left;
-  const reason = survivor.submittedResume
+  const hasApplication = (card: DuplicateMergeCardInput) => ['applied', 'interviewing'].includes(card.status)
+    || (card.status === 'passed' && card.passReason === 'Already applied');
+  const blockedReason = selectedSurvivorId !== undefined && (redundant.submittedResume || (hasApplication(redundant) && !hasApplication(survivor)))
+    ? 'The other card contains a protected application record. Choose that card to keep its application history.'
+    : null;
+  const reason = selectedSurvivorId !== undefined
+    ? `Merge into the selected ${survivor.status.replaceAll('_', ' ')} card and keep its status.`
+    : survivor.submittedResume
     ? 'This card contains the submitted résumé and application record.'
     : ['applied', 'interviewing'].includes(survivor.status)
       ? `The ${survivor.status} card keeps the protected application history.`
@@ -499,7 +512,7 @@ export function chooseDuplicateCardMergePlan(
     redundantId: redundant.id,
     survivorStatus: survivor.status,
     survivorReason: reason,
-    blockedReason: null,
+    blockedReason,
     aim,
     experience: boundExperience,
   };
@@ -549,7 +562,11 @@ export type DuplicateMergeReviewCard = {
 export async function previewDuplicateCardMerge(
   tx: Prisma.TransactionClient,
   input: { firstId: string; secondId: string; preferredId: string },
-): Promise<{ cards: [DuplicateMergeReviewCard, DuplicateMergeReviewCard]; plan: DuplicateCardMergePlan }> {
+): Promise<{
+  cards: [DuplicateMergeReviewCard, DuplicateMergeReviewCard];
+  plan: DuplicateCardMergePlan;
+  selectionPlans: Record<string, DuplicateCardMergePlan>;
+}> {
   if (input.firstId === input.secondId) throw new CardMergeRefused('A card cannot be merged into itself.');
   const rows = await tx.job.findMany({ where: { id: { in: [input.firstId, input.secondId] } } });
   const first = rows.find((row) => row.id === input.firstId);
@@ -557,11 +574,14 @@ export async function previewDuplicateCardMerge(
   if (!first || !second) throw new CardMergeRefused('One of the two cards no longer exists.');
   const jobs: [Job, Job] = [first, second];
   const inputs = await mergeInputsForJobs(tx, jobs);
-  const plan = chooseDuplicateCardMergePlan(inputs, input.preferredId);
-  plan.blockedReason = dayforceCardMergeConflict(first, second) || plan.blockedReason;
-  if (paylocityPostingsConflict(first.canonicalUrl || first.url, second.canonicalUrl || second.url)) {
-    plan.blockedReason = 'These are different Paylocity postings. Keep them as separate cards.';
-  }
+  const identityConflict = dayforceCardMergeConflict(first, second)
+    || (paylocityPostingsConflict(first.canonicalUrl || first.url, second.canonicalUrl || second.url)
+      ? 'These are different Paylocity postings. Keep them as separate cards.' : null);
+  const applyConflict = (plan: DuplicateCardMergePlan) => ({ ...plan, blockedReason: identityConflict || plan.blockedReason });
+  const plan = applyConflict(chooseDuplicateCardMergePlan(inputs, input.preferredId));
+  const selectionPlans = Object.fromEntries(jobs.map(job => [
+    job.id, applyConflict(chooseDuplicateCardMergePlan(inputs, input.preferredId, job.id)),
+  ]));
   const cards = jobs.map((job, index): DuplicateMergeReviewCard => ({
     id: job.id,
     title: job.title,
@@ -575,7 +595,7 @@ export async function previewDuplicateCardMerge(
     aimFitScore: inputs[index].aim?.value ?? null,
     reqFitScore: inputs[index].experience?.value ?? null,
   })) as [DuplicateMergeReviewCard, DuplicateMergeReviewCard];
-  return { cards, plan };
+  return { cards, plan, selectionPlans };
 }
 
 async function createDuplicateMergeScoreEvent(
@@ -641,17 +661,18 @@ async function createDuplicateMergeScoreEvent(
 /**
  * Folds one card into another after Joseph confirms they are the same job.
  *
- * The survivor keeps its own status, scores, description and résumé. The
- * other card is dismissed as consolidated and its sources move over. If the
- * other card holds an application and the survivor holds none, the application
- * moves to the survivor. Two different human decisions, or a submitted résumé
- * on the card being folded away, still refuse: those are facts only Joseph can
- * reconcile, and merging would erase one of them.
+ * The chosen survivor keeps its status, description and résumé. Scores follow
+ * the existing consolidation policy; sources and attachments move over, and
+ * the other card is retained as dismissed consolidation history. Legacy callers
+ * use automatic ranking. Explicit choices cannot fold away a submitted résumé
+ * or replace a protected application record with a non-application card.
  */
 export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
   redundantId: string;
   survivorId: string;
   route: 'paste_link' | 'card_merge';
+  /** Joseph's explicit destination overrides automatic lifecycle ranking. */
+  selectedSurvivorId?: string;
   /** A link update must survive the duplicate-review detour unchanged. */
   url?: string;
   /** Historical data repairs retain the chosen card's exact displayed scores. */
@@ -678,7 +699,7 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
     throw new CardMergeRefused('These are different Paylocity postings. Keep them as separate cards.');
   }
   const mergeInputs = await mergeInputsForJobs(tx, jobs);
-  const mergePlan = chooseDuplicateCardMergePlan(mergeInputs, input.redundantId);
+  const mergePlan = chooseDuplicateCardMergePlan(mergeInputs, input.redundantId, input.selectedSurvivorId);
   if (mergePlan.blockedReason) throw new CardMergeRefused(mergePlan.blockedReason);
   const survivor = jobs.find((job) => job.id === mergePlan.survivorId)!;
   const redundant = jobs.find((job) => job.id === mergePlan.redundantId)!;
