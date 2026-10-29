@@ -1130,9 +1130,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           <div className="expand-section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               About the Role
-              {job.description && job.description.length < 400 && !isEditingJD && (
-                <span style={{ fontSize: '12px', color: '#f5a623', background: 'rgba(245, 166, 35, 0.1)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <AlertTriangle size={14} /> Truncated
+              {job.description && job.description.length < 650 && !isEditingJD && (
+                <span title="This may be only a summary. Check the employer posting for the full duties and requirements." style={{ fontSize: '12px', color: '#f5a623', background: 'rgba(245, 166, 35, 0.1)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <AlertTriangle size={14} /> Short description
                 </span>
               )}
             </div>

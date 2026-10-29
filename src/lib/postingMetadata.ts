@@ -2,6 +2,7 @@ import { hasIncompleteLocations, INCOMPLETE_LOCATION, US_STATE_LOCATION_PATTERN 
 import type { AtsScrapeResult } from '@/lib/atsApi';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { reviewedTalemetryEmployer } from './talemetryEmployer';
+import { cleanJobDescriptionPage } from './jobDescriptionCleanup';
 
 export type PostingMetadata = Pick<AtsScrapeResult, 'title' | 'company' | 'location'>;
 
@@ -72,7 +73,8 @@ export function postingRefreshDescription(input: {
   preserveScores: boolean;
   metadata: PostingMetadata;
 }): { description: string; verified: boolean } {
-  const verified = assessJobDescriptionQuality(input.description, { structuredSource: input.structuredSource }).scorable;
+  const description = cleanJobDescriptionPage(input.description);
+  const verified = assessJobDescriptionQuality(description, { structuredSource: input.structuredSource }).scorable;
   if (input.preserveScores && !verified) {
     if (!input.metadata.title && !input.metadata.company && !input.metadata.location) {
       throw new Error('The posting did not provide verifiable job details');
@@ -80,7 +82,7 @@ export function postingRefreshDescription(input: {
     return { description: input.existingDescription || '', verified: false };
   }
   if (!verified) throw new Error('The posting did not provide a verifiable job description');
-  return { description: input.description, verified };
+  return { description, verified };
 }
 
 function readerLine(value: string): string {

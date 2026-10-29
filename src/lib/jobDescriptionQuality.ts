@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import { cleanJobDescriptionPage, looksLikeTrabajoPageChrome } from './jobDescriptionCleanup';
 
 export const MIN_SCORABLE_JD_CHARACTERS = 650;
 
@@ -162,7 +163,7 @@ function readerPostingBody(value: string): string {
  * of the server's status (see readerReportsMissingPosting).
  */
 export function isClosedJobPosting(value: string | null | undefined): boolean {
-  return hasTerminalClosureSignal(normalizedTerminalPageText(value))
+  return hasTerminalClosureSignal(normalizedTerminalPageText(cleanJobDescriptionPage(String(value || ''))))
     || readerReportsMissingPosting(value);
 }
 
@@ -185,7 +186,7 @@ function normalizedTerminalPageText(value: string | null | undefined): string {
  * they are not proof that an individual requisition has closed.
  */
 export function isTerminalJobPostingPage(value: string | null | undefined): boolean {
-  const text = normalizedTerminalPageText(value);
+  const text = normalizedTerminalPageText(cleanJobDescriptionPage(String(value || '')));
   if (!text) return false;
   const missingPage = /\b(?:(?:error|status|code|http)\s*:?\s*404\b|404\s*[:–-]?\s*(?:not found|error|page)|(?:job|position|posting|requisition|page) not found|page (?:does not|doesn't|no longer) exist|page you (?:are|were) looking for (?:does not|doesn't|no longer) exist)\b/i.test(text);
   return missingPage || hasTerminalClosureSignal(text);
@@ -204,6 +205,8 @@ export function looksLikeSiteConfiguration(value: string): boolean {
 }
 
 export function looksLikeInvalidJobDescription(value: string): boolean {
+  value = cleanJobDescriptionPage(value);
+  if (looksLikeTrabajoPageChrome(value)) return true;
   const text = normalizedDescription(readerPostingBody(value)).toLowerCase();
   if (!text || looksLikeSiteConfiguration(text)) return true;
   // Anti-bot explanations can be long and mention browser "requirements".
@@ -231,6 +234,7 @@ export function assessJobDescriptionQuality(
   value: string,
   options: JobDescriptionQualityOptions = {},
 ): JobDescriptionQuality {
+  value = cleanJobDescriptionPage(value);
   const text = normalizedDescription(readerPostingBody(value));
   if (looksLikeInvalidJobDescription(value)) {
     return { scorable: false, reason: 'expired, closed, login, cookie, or portal shell' };

@@ -41,6 +41,7 @@ import {
 } from "./atsRotation";
 import { recordDiscoveredAtsBoard } from './atsBoardDiscovery';
 import { derivePostingFacts } from './postingFacts';
+import { cleanJobDescriptionPage } from './jobDescriptionCleanup';
 import { extractStructuredBaseCompensation } from './postedCompensation';
 import { isEnrichmentSubSource } from './ingestionSourceKind';
 import { isProviderRefusalWithoutRequest } from './jdEnrichmentDeferral';
@@ -1705,7 +1706,7 @@ const MAX_HTML_CLEAN_PASSES = 3;
  * than assuming any particular provider's encoding.
  */
 export function cleanHtmlText(html: string): string {
-  let text = cleanHtmlTextOnce(html);
+  let text = cleanHtmlTextOnce(cleanJobDescriptionPage(html));
   for (let pass = 1; pass < MAX_HTML_CLEAN_PASSES && ESCAPED_MARKUP_RESIDUE.test(text); pass += 1) {
     const next = cleanHtmlTextOnce(text);
     if (next === text) break;

@@ -7,6 +7,7 @@ import {
   type JobDescriptionQuality,
   type JobDescriptionQualityOptions,
 } from './jobDescriptionQuality';
+import { cleanJobDescriptionPage } from './jobDescriptionCleanup';
 
 export const MAX_JD_RECOVERY_ATTEMPTS = 3;
 export const JD_RECOVERY_MANUAL_REVIEW_REASON = 'JD recovery failed after 3 attempts. Manual review required.';
@@ -64,7 +65,7 @@ export function decideJdRecovery(
   currentAttempts: number,
   qualityOptions: JobDescriptionQualityOptions = {},
 ): JdRecoveryDecision {
-  const text = value || '';
+  const text = cleanJobDescriptionPage(value || '');
   if (isClosedJobPosting(text)) return { kind: 'closed', text };
   const quality = assessJobDescriptionQuality(text, qualityOptions);
   if (quality.scorable) return { kind: 'ready', text, quality };
