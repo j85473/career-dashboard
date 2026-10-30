@@ -60,6 +60,9 @@ PIPELINE_FLOW.html
 !.agents/agents/
 !.agents/agents/**
 !.agents/hooks.json
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/career-dashboard-cloud-scoring/
 # .agents/minified_evidence.json is intentionally tracked, for the same reason
 # data/resumes is (see above). prepare_native_scoring_phase.ts reads it at
 # runtime via requiredProjectFile() and requires it to be canonically identical

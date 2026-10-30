@@ -5,18 +5,48 @@ import json
 import tempfile
 import unittest
 import uuid
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.scoring_protocol.cli import (
     project_output_dir,
     publish_desktop_upload_copy,
     repo_root,
     verified_delivery_receipt,
+    run_stage,
 )
 from scripts.scoring_protocol.common import verify_byte_identical
 
 
 class ScoringCliDeliveryTests(unittest.TestCase):
+    def test_cloud_delivery_option_keeps_canonical_result_and_uses_requested_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "result.json"
+            source.write_text(json.dumps({"batch": {"id": str(uuid.uuid4())}, "resultHash": "b" * 64}))
+            requested = root / "downloadable"
+            stdout = StringIO()
+            with patch("scripts.scoring_protocol.cli.run_aim", return_value=(source, {"submitted": 1})), redirect_stdout(stdout):
+                status = run_stage("aim", [str(root / "export.json"), "--delivery-dir", str(requested)])
+            receipt = json.loads(stdout.getvalue())
+            self.assertEqual(status, 0)
+            self.assertEqual(Path(receipt["desktopUploadPath"]).parent, requested.resolve())
+            self.assertEqual(source.read_bytes(), Path(receipt["desktopUploadPath"]).read_bytes())
+            self.assertEqual(receipt["projectOutputPath"], str(source))
+            self.assertTrue(receipt["deliveryVerification"]["jsonIdentityVerified"])
+
+    def test_calibration_does_not_create_cloud_upload_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requested = root / "downloadable"
+            stdout = StringIO()
+            with patch("scripts.scoring_protocol.cli.run_aim", return_value=(root / "calibration.json", {})), redirect_stdout(stdout):
+                run_stage("aim", [str(root / "export.json"), "--force-fresh-calibration", "--delivery-dir", str(requested)])
+            self.assertIsNone(json.loads(stdout.getvalue())["desktopUploadPath"])
+            self.assertFalse(requested.exists())
+
     def test_default_canonical_output_stays_inside_project(self) -> None:
         self.assertEqual(project_output_dir(), repo_root() / "data" / "scoring" / "results")
 
