@@ -64,8 +64,22 @@ test('confirmed closed postings expire unless the Manual Import lifecycle is pro
 
 test('local scoring either withholds deterministically or hands eligible jobs to Aim', () => {
   assert.match(localScoring, /scoringStatus: 'queued'/);
-  assert.match(localScoring, /scoringStatus: deterministicallyRejected \? 'skipped' : 'scored'/);
+  assert.match(localScoring, /scoringStatus: deterministicallyRejected \|\| postingClosedBeforeAim \? 'skipped' : 'scored'/);
   assert.match(localScoring, /currentJob\.source === 'Manual Import' \? currentJob\.status : 'dismissed'/);
+});
+
+test('unscored JSearch jobs are verified after local acceptance and before Aim eligibility', () => {
+  const triageIndex = localScoring.indexOf('const deterministicallyRejected =');
+  const verificationIndex = localScoring.indexOf('await verifyJSearchBeforeAim(', triageIndex);
+  const aimEligibilityIndex = localScoring.indexOf("scoringStatus: deterministicallyRejected || postingClosedBeforeAim ? 'skipped' : 'scored'", verificationIndex);
+  assert.ok(triageIndex >= 0, 'local triage decision is missing');
+  assert.ok(verificationIndex > triageIndex, 'JSearch verification must follow local acceptance');
+  assert.ok(aimEligibilityIndex > verificationIndex, 'Aim eligibility must follow JSearch verification');
+  assert.match(localScoring, /currentJob\.source === 'JSearch'/);
+  assert.match(localScoring, /currentJob\.aimFitScore === null && currentJob\.reqFitScore === null/);
+  assert.match(localScoring, /verificationStatus: preAimVerification\.liveness/);
+  assert.match(localScoring, /status: 'expired'/);
+  assert.match(localScoring, /updatedAt: currentJob\.updatedAt,[\s\S]*?scoreEvents: \{ none: \{\} \}/);
 });
 
 test('local scoring applies affirmative non-English information before its JD resolver', () => {

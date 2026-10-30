@@ -30,7 +30,7 @@ import { LOCAL_SCORING_TERMINAL_ATTEMPTS } from './localScoringPolicy';
 import { filterNewCustomerSuccessRole } from './newCustomerSuccessExclusion';
 import { employerTriageVerdict, localTriageVerdict, titleTriageVerdict } from './localTriage';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
-import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
+import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate, CLOSED_POSTING_REASON } from './jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from './ingestionSourceKind';
 import { jdRecoveryProviderControl } from './jdRecoveryProviderControl';
 import {
@@ -53,6 +53,7 @@ import {
   isRetryableIngestionTransactionError,
   withProviderTransactionRetry,
 } from './ingestionControl';
+import { verifyJSearchBeforeAim, type PreAimPostingVerification } from './preAimPostingVerification';
 
 export {
   assessJobDescriptionQuality,
@@ -1206,9 +1207,44 @@ export async function scoreJobs(
       const deterministicallyRejected = !triage.pass && !lifecycleProtected;
       const passReason = deterministicallyRejected ? `Locally triaged out: ${triage.reason}` : null;
 
+      // JSearch copies can retain a complete, matching JD after the employer
+      // closes the requisition. Once local triage has accepted the role, but
+      // before `scoringStatus = scored` makes it Aim-eligible, verify the
+      // employer posting when possible. This applies only to jobs with no
+      // historical score authority; existing scores and human work are never
+      // reinterpreted by a new availability check.
+      let preAimVerification: PreAimPostingVerification | null = null;
+      if (!deterministicallyRejected && !lifecycleProtected && currentJob.source === 'JSearch'
+        && currentJob.fitScore === null && currentJob.aimFitScore === null && currentJob.reqFitScore === null
+        && !await prisma.jobScoreEvent.findFirst({ where: { jobId: currentJob.id }, select: { id: true } })) {
+        preAimVerification = await verifyJSearchBeforeAim({
+          title: newTitle,
+          company: newCompany,
+          location: newLocation,
+          description: fullDesc,
+          url: currentJob.url,
+          canonicalUrl: resolved.canonicalUrl || currentJob.canonicalUrl,
+          source: currentJob.source,
+        }, { store: prisma });
+      }
+      const postingClosedBeforeAim = preAimVerification?.liveness === 'expired'
+        || preAimVerification?.liveness === 'unavailable';
+
       const updateResult = await withLocalScoringTransaction(async (tx) => {
         const result = await tx.job.updateMany({
-          where: claimedJobSnapshot(currentJob, leaseId),
+          where: {
+            ...claimedJobSnapshot(currentJob, leaseId),
+            ...(preAimVerification ? {
+              // The network check can outlive a user edit. Only project its
+              // result onto the exact unscored card that was verified.
+              updatedAt: currentJob.updatedAt,
+              url: currentJob.url,
+              fitScore: null,
+              aimFitScore: null,
+              reqFitScore: null,
+              scoreEvents: { none: {} },
+            } : {}),
+          },
           data: {
             title: newTitle,
             company: newCompany,
@@ -1220,12 +1256,23 @@ export async function scoreJobs(
             ...fullDescPostingFacts,
             ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
             ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
+            ...(preAimVerification?.replacement ? {
+              url: preAimVerification.replacement.url,
+              canonicalUrl: preAimVerification.replacement.url,
+            } : {}),
+            ...(preAimVerification ? {
+              verificationStatus: preAimVerification.liveness,
+              lastVerifiedAt: new Date(),
+            } : {}),
             recommendedResume,
-            scoringStatus: deterministicallyRejected ? 'skipped' : 'scored',
+            scoringStatus: deterministicallyRejected || postingClosedBeforeAim ? 'skipped' : 'scored',
             batchJobId: null,
             ...(deterministicallyRejected ? {
               status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
               passReason,
+            } : postingClosedBeforeAim ? {
+              status: 'expired',
+              passReason: CLOSED_POSTING_REASON,
             } : {}),
             scoreAttempts: 0,
             scoreError: null,
@@ -1233,6 +1280,30 @@ export async function scoreJobs(
             deepseekScoreError: null,
           },
         });
+        if (result.count === 1 && preAimVerification) {
+          await tx.jobPipelineEvent.create({ data: {
+            eventKey: `jsearch-pre-aim-check:${currentJob.id}:${randomUUID()}`,
+            eventType: 'jsearch_posting_verified',
+            stage: 'pre_aim_verification',
+            jobId: currentJob.id,
+            source: currentJob.source,
+            sourceId: currentJob.sourceId,
+            details: {
+              outcome: preAimVerification.liveness,
+              authority: preAimVerification.authority,
+              sourceOutcome: preAimVerification.sourceLiveness,
+              originalUrl: currentJob.url,
+              replacementUrl: preAimVerification.replacement?.url || null,
+              matchEvidence: preAimVerification.replacement ? {
+                via: preAimVerification.replacement.matchedVia,
+                by: preAimVerification.replacement.matchedBy || null,
+                title: preAimVerification.replacement.postingTitle,
+                location: preAimVerification.replacement.postingLocation,
+              } : null,
+              probes: preAimVerification.probes,
+            },
+          } });
+        }
         if (result.count === 1 && resolvedInputChanges.length > 0) {
           await invalidateActiveJobScores({
             jobId: currentJob.id,
@@ -1253,7 +1324,9 @@ export async function scoreJobs(
       }
       const updated = onProgress ? await prisma.job.findUnique({ where: { id: job.id } }) : null;
       if (onProgress) onProgress(
-        deterministicallyRejected
+        postingClosedBeforeAim
+          ? `Expired stale JSearch posting before Aim: ${currentJob.company}`
+          : deterministicallyRejected
           ? `Locally rejected ${currentJob.company} without an API call`
           : `Locally triaged ${currentJob.company} (${score})`,
         updated || undefined,
