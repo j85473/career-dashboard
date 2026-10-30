@@ -2,6 +2,9 @@
 Description=Career Dashboard Common Crawl ATS board discovery
 After=career-dashboard.service
 ConditionPathExists=/etc/career-dashboard/production-enabled
+# Retry transient failures without looping indefinitely on a configuration error.
+StartLimitIntervalSec=1h
+StartLimitBurst=3
 [Service]
 Type=oneshot
 User=career-dashboard
@@ -19,6 +22,8 @@ EnvironmentFile=-/etc/career-dashboard/common-crawl-local.env
 # lock. A completed audit checks for only newly published indexes; it never
 # silently falls back to the legacy API crawler.
 ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run ats:discovery:audit
+Restart=on-failure
+RestartSec=5min
 TimeoutStartSec=infinity
 # Keep discovery cooperative with the Dashboard and HDD backup traffic.
 Nice=10

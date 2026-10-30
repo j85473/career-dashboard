@@ -144,6 +144,16 @@ async function endsInNewline(filename: string): Promise<boolean> {
 
 /** Atomic, bounded download. A 200 response to a range is never accepted. */
 async function download(url: string, filename: string, maxBytes: number, range?: LocalCrawlBlock, fetcher = fetch): Promise<void> {
+  try {
+    await downloadOnce(url, filename, maxBytes, range, fetcher);
+  } catch (error) {
+    const context = range ? `, bytes ${range.offset}-${range.offset + range.length - 1}` : '';
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Common Crawl download failed (${url}${context}): ${message}`, { cause: error });
+  }
+}
+
+async function downloadOnce(url: string, filename: string, maxBytes: number, range?: LocalCrawlBlock, fetcher = fetch): Promise<void> {
   const response = await fetcher(url, { headers: { ...HEADERS, ...(range ? { Range: `bytes=${range.offset}-${range.offset + range.length - 1}` } : {}) }, signal: AbortSignal.timeout(120_000), redirect: 'error' });
   try {
     if (response.status !== (range ? 206 : 200) || !response.body) throw new Error(`Common Crawl file request returned HTTP ${response.status}.`);
@@ -169,7 +179,13 @@ async function download(url: string, filename: string, maxBytes: number, range?:
       }
       if (received !== Number(declared)) throw new Error('Common Crawl download was truncated.');
       await file.sync();
-    } finally { await reader.cancel(); reader.releaseLock(); await file.close(); }
+    } finally {
+      // A failed stream also rejects cancel(). Still close the scratch file and
+      // retain the original failure rather than losing its request context.
+      try { await reader.cancel(); } catch { /* The body is already unusable. */ }
+      reader.releaseLock();
+      await file.close();
+    }
     await rename(`${filename}.part`, filename);
   } finally { if (!response.bodyUsed) await response.body?.cancel(); }
 }
