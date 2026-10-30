@@ -1,0 +1,9 @@
+{
+  "name": "@career-dashboard/deepmerge",
+  "version": "4.3.1-dashboard.1",
+  "private": true,
+  "description": "Local deepmerge 4.3.1 security fork fixing GHSA-gcqx-w48m-w2h4",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "license": "MIT"
+}

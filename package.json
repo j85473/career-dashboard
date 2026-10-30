@@ -116,6 +116,7 @@
     "cheerio": "^1.2.0",
     "cloakbrowser": "0.6.3",
     "date-fns": "^4.4.0",
+    "deepmerge": "file:vendor/deepmerge",
     "dotenv": "^17.4.2",
     "lucide-react": "^1.57.0",
     "mammoth": "^1.13.0",
@@ -150,6 +151,11 @@
     "typescript": "^5"
   },
   "overrides": {
+    "@hono/node-server": "2.1.3",
+    "body-parser": "2.4.0",
+    "deepmerge": "$deepmerge",
+    "qs": "6.16.1",
+    "undici": "7.30.1",
     "basic-ftp": "6.2.2",
     "hono": "4.13.13",
     "mammoth": {
@@ -162,7 +168,7 @@
     "prisma": {
       "mysql2": "3.24.6"
     },
-    "follow-redirects": "1.16.1",
+    "follow-redirects": "1.16.2",
     "ip-address": "10.7.4"
   }
 }
