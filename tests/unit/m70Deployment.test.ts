@@ -11,6 +11,7 @@ const scheduledBackup = readFileSync(path.resolve('scripts/deployment/m70-backup
 const scheduledBackupService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.service'), 'utf8');
 const scheduledBackupTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.timer'), 'utf8');
 const discoveryAuditResumeCheck = readFileSync(path.resolve('scripts/deployment/discovery-audit-resume-needed.cjs'), 'utf8');
+const weeklyDiscoveryService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-discovery.service'), 'utf8');
 const canonicalResolverService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.service'), 'utf8');
 const canonicalResolverTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.timer'), 'utf8');
 const canonicalApiService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-api.service'), 'utf8');
@@ -184,6 +185,7 @@ test('a deploy resumes a durable unfinished Common Crawl audit even between serv
   // A discovery pass can run for hours. It is stopped with the other timers,
   // waited out rather than killed, and restored only if it had been running.
   assert.match(activation, /systemctl stop career-dashboard-discovery\.timer 2>\/dev\/null \|\| true/);
+  assert.match(activation, /systemctl stop career-dashboard-discovery\.service 2>\/dev\/null \|\| true/);
   assert.match(activation, /career-dashboard-discovery\.service career-dashboard-discovery-audit\.service[^;]*; do/);
   assert.match(activation, /systemctl is-active --quiet career-dashboard-discovery\.timer && DISCOVERY=1/);
   assert.match(activation, /\(\( DISCOVERY == 0 \)\) \|\| systemctl start career-dashboard-discovery\.timer/);
@@ -200,6 +202,17 @@ test('a deploy resumes a durable unfinished Common Crawl audit even between serv
   assert.match(resumeFunction, /systemctl start career-dashboard-discovery-audit\.service/);
   assert.match(discoveryAuditResumeCheck, /status: \{ in: \['running', 'validating'\] \}/);
   assert.doesNotMatch(discoveryAuditResumeCheck, /update|create|delete|executeRaw|queryRaw/);
+});
+
+test('weekly discovery retries failures with pacing and a finite start limit', () => {
+  assert.match(weeklyDiscoveryService, /Restart=on-failure/);
+  assert.match(weeklyDiscoveryService, /RestartSec=5min/);
+  assert.match(weeklyDiscoveryService, /StartLimitIntervalSec=1h/);
+  assert.match(weeklyDiscoveryService, /StartLimitBurst=3/);
+  // A peer holding the shared discovery lock is a clean skip, not a retry loop.
+  assert.match(weeklyDiscoveryService, /flock -n -E 0 .*discovery\.lock/);
+  const stopWeekly = activation.indexOf('systemctl stop career-dashboard-discovery.service');
+  assert.ok(stopWeekly > 0 && stopWeekly < activation.indexOf('(( QUIET == 1 ))'));
 });
 
 test('a release keeps user data, runtime state and credentials outside the code it swaps', () => {

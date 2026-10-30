@@ -72,6 +72,20 @@ boards after application, rather than treating a running worker as progress.
 
 The operator's pre-existing pipeline pause is preserved through migration and deployment. At the final source freeze it was scheduled to expire **September 2 at 8:55:14 PM America/Chicago** (`2026-09-03T01:55:14.112Z`). A running acquisition process can correctly hold zero leases while that pause is in force. The watchdog can report `no_live_workers` during that pause; this is not proof of failed service startup or justification to clear the pause.
 
+### Weekly discovery recovery (October 30, 2026)
+
+The weekly discovery service retries failures after five minutes, with at most
+three starts in one hour. It resumes the same durable audit, index receipts and
+local block cursor; it does not reset coverage or existing jobs. A peer holding
+the shared discovery lock remains a successful skip. Persistent errors still
+leave a visible failed service after the retry budget is exhausted.
+
+Deployment stops the weekly worker as well as its timer, cancelling any pending
+restart before migration or release activation. The existing audit recovery
+check resumes unfinished work after the new release is healthy. Direct-file
+download errors include the source URL and byte range, and a failed response
+body cannot prevent its scratch file from closing.
+
 ## Releases and persistent files
 
 The GitHub workflow is **Deploy to M70**. Pushes to `main`, and manual workflow dispatches, now target the M70. The existing CI key and RapidAPI secret names are retained; the destination, pinned host key and restricted configuration path have changed.

@@ -191,6 +191,9 @@ systemctl stop career-dashboard-board-pruning.timer 2>/dev/null || true
 systemctl stop career-dashboard-first-collections.timer 2>/dev/null || true
 systemctl stop career-dashboard-rotation-balance.timer 2>/dev/null || true
 systemctl stop career-dashboard-discovery.timer 2>/dev/null || true
+# Cancel an active weekly worker or its pending automatic restart before the
+# release changes. Its committed receipts/cursor are resumed by the audit worker.
+systemctl stop career-dashboard-discovery.service 2>/dev/null || true
 systemctl stop career-dashboard-canonical-resolver.timer 2>/dev/null || true
 systemctl stop career-dashboard-canonical-api.timer 2>/dev/null || true
 systemctl stop career-dashboard-gusto.timer 2>/dev/null || true

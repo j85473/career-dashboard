@@ -119,6 +119,27 @@ test('a failed directory download never replaces a previously complete directory
   assert.equal(await readFile(file, 'utf8'), 'previous complete directory');
 });
 
+test('a terminated body keeps its request context and cannot publish a partial block', async t => {
+  const folder = await temp(t); const f = fixture(); let requests = 0;
+  const failure = new TypeError('terminated', { cause: new Error('socket closed') });
+  const fetcher = (async () => {
+    requests++;
+    return f.response(new ReadableStream({ start(controller) { controller.error(failure); } }));
+  }) as typeof fetch;
+  await assert.rejects(readLocalCrawlBlock(f.plan, 0, folder, fetcher), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /Common Crawl download failed/);
+    assert.match(error.message, /cdx-00001\.gz, bytes 100-/);
+    assert.match(error.message, /terminated/);
+    assert.equal(error.cause, failure);
+    return true;
+  });
+  assert.equal(requests, 1, 'the service owns retries and pacing');
+  await assert.rejects(readFile(localCrawlBlockFile(folder, localCrawlPlanHash(f.plan), 0)));
+  assert.deepEqual(await readLocalCrawlBlock(f.plan, 0, folder, (async () => f.response()) as typeof fetch),
+    [{ url: 'https://acme.bamboohr.com/careers/1' }]);
+});
+
 test('scratch refuses the OS filesystem, missing mounts and invalid safety limits', async t => {
   const folder = await temp(t);
   await assert.rejects(prepareLocalCrawlWorkspace(localCrawlConfig({ ATS_DISCOVERY_LOCAL_MOUNT: folder })), /mounted drive/);
