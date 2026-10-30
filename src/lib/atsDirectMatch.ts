@@ -51,6 +51,7 @@ import { eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl,
 import { workdayBoardSlugFromJobUrl } from './atsBoardYield';
 import { reserveProviderBudgetForSource } from './ingestionControl';
 import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardRequest, parseZohoRecruitListing } from './zohoRecruitBoard';
+import { fetchEmployerBoardPostings } from './employerBoardPostings';
 
 export { locationsCompatibleForDirectMatch } from './directMatchLocation';
 
@@ -192,7 +193,9 @@ export function selectDirectAtsMatch(
     // titles never actually agreed. "... - Milwaukee, WI" is not
     // "... - Minneapolis, MN", whatever the location fields happen to say.
     const postingSuffix = titleLocationSuffix(posting.title);
-    if (wantedSuffix && postingSuffix && wantedSuffix !== postingSuffix) return false;
+    if (wantedSuffix && postingSuffix && !locationsCompatibleForDirectMatch(wantedSuffix, postingSuffix)) return false;
+    if (wantedSuffix && !locationsCompatibleForDirectMatch(wantedSuffix, posting.location)) return false;
+    if (postingSuffix && !locationsCompatibleForDirectMatch(job.location, postingSuffix)) return false;
     return true;
   };
   const compatible = postings.filter((posting) => titleKey(posting.title || '') === wantedTitle
@@ -515,7 +518,7 @@ export type DirectMatchDeps = {
 };
 
 type DirectMatchStore = Pick<Prisma.TransactionClient, 'job'>
-  & Partial<Pick<Prisma.TransactionClient, 'atsCompany' | 'companyNameRule'>>;
+  & Partial<Pick<Prisma.TransactionClient, 'atsCompany' | 'companyNameRule' | 'employerAtsBoard'>>;
 
 const ruleContexts = new WeakMap<DirectMatchStore, { expiresAt: number; rules: EmployerRule[];
   index: ReturnType<typeof buildEmployerRuleIndex> }>();
@@ -546,11 +549,11 @@ export class StoredAtsCatalogueLimitError extends Error {
 export async function findStoredAtsPostings(
   company: string,
   store: DirectMatchStore,
-): Promise<{ postings: BoardPosting[]; board: BoardIdentity | null }> {
+): Promise<{ postings: BoardPosting[]; board: BoardIdentity | null; boards: BoardIdentity[] }> {
   const { rules, index } = await employerRules(store);
   const employer = resolveEmployer({ company }, index);
   const wanted = normalizeCompany(employer || '');
-  if (!wanted || isPlaceholderEmployerName(employer)) return { postings: [], board: null };
+  if (!wanted || isPlaceholderEmployerName(employer)) return { postings: [], board: null, boards: [] };
   const compactWanted = wanted.replace(/\s+/g, '');
   // Rules must participate in retrieval, not just the comparison afterwards:
   // an old card may still carry the source's alias and no canonical employer.
@@ -643,6 +646,19 @@ export async function findStoredAtsPostings(
     const separator = rule.matchKey.indexOf(':');
     if (separator > 0) addBoard({ platform: rule.matchKey.slice(0, separator), slug: rule.matchKey.slice(separator + 1) });
   }
+  // Employer discovery verifies these links through the official careers site.
+  // Reuse that evidence even before this board has supplied its first saved job.
+  // Name queries retrieve candidates; canonical employer equality authorizes them.
+  const mappings = store.employerAtsBoard ? await store.employerAtsBoard.findMany({
+    where: { OR: companyCandidates.flatMap(candidate => candidate.company
+      ? [{ companyName: candidate.company }] : []) },
+    select: { companyName: true, platform: true, slug: true, evidenceUrl: true },
+  }) : [];
+  for (const mapping of mappings) {
+    if (mapping.evidenceUrl && sameEmployer({ company: resolveEmployer({ company: mapping.companyName }, index) }, { employer })) {
+      addBoard({ platform: mapping.platform, slug: mapping.slug });
+    }
+  }
   const registered = store.atsCompany && boards.size ? await store.atsCompany.findMany({
     where: { OR: [...boards.values()] }, select: { platform: true, slug: true, status: true },
   }) : null;
@@ -651,7 +667,7 @@ export async function findStoredAtsPostings(
   const activeBoards = [...boards.entries()].filter(([key]) => enabled.has(key)).map(([, value]) => value);
   const postings = complete ? candidates.filter(row => !row.board || enabled.has(`${row.board.platform}:${row.board.slug}`))
     .map(row => ({ title: row.title, url: row.url, location: row.location, description: row.description })) : [];
-  return { postings, board: activeBoards.length === 1 ? activeBoards[0] : null };
+  return { postings, board: activeBoards.length === 1 ? activeBoards[0] : null, boards: activeBoards };
 }
 
 /**
@@ -750,7 +766,7 @@ export async function resolveDirectAtsPosting(
   if (!isAggregatorSource(job.source)) return null;
   if (!job.title?.trim() || !job.company?.trim()) return null;
 
-  const { postings: stored, board } = await findStoredAtsPostings(job.company, deps.store);
+  const { postings: stored, board, boards } = await findStoredAtsPostings(job.company, deps.store);
 
   const storedMatch = selectDirectAtsMatch(job, stored);
   if (storedMatch) {
@@ -769,24 +785,33 @@ export async function resolveDirectAtsPosting(
 
   // We know the company's board but not this posting, which is exactly the case
   // where the board has moved on since its last sweep.
-  if (!board || deps.allowLivePing === false) return null;
+  if (!boards.length || deps.allowLivePing === false) return null;
   const canonicalCompany = resolveEmployer({ company: job.company }, (await employerRules(deps.store)).index);
-  const key = `${board.platform}:${board.slug}:${normalizeTitle(job.title)}`;
+  const key = board ? `${board.platform}:${board.slug}:${normalizeTitle(job.title)}`
+    : `boards:${JSON.stringify(boards.map(item => `${item.platform}:${item.slug}`).sort())}`;
   let pending = deps.liveCache?.get(key);
   if (!pending) {
-    pending = fetchBoardPostings(board, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000,
-      { title: job.title, company: canonicalCompany });
+    pending = board
+      ? fetchBoardPostings(board, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000,
+        { title: job.title, company: canonicalCompany })
+      : Promise.all(boards.map(item => fetchEmployerBoardPostings(item,
+        deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000)))
+        // An unavailable board could contain a competing requisition. Never
+        // turn a partial employer catalogue into a seemingly unique match.
+        .then(catalogues => catalogues.some(items => items === null) ? [] : catalogues.flatMap(items => items!));
     deps.liveCache?.set(key, pending);
   }
   const live = await pending;
   const liveMatch = selectDirectAtsMatch(job, live);
   if (!liveMatch) return null;
+  const identity = boardIdentityFromUrl(liveMatch.url) || board;
+  if (!identity) return null;
 
   return {
     url: normalizeUrl(liveMatch.url) || liveMatch.url,
     description: liveMatch.description,
-    platform: board.platform,
-    slug: board.slug,
+    platform: identity.platform,
+    slug: identity.slug,
     matchedVia: 'live',
     matchedBy: selectDirectAtsMatch({ ...job, description: null }, live)?.url === liveMatch.url ? 'title' : 'description',
     postingTitle: liveMatch.title,
