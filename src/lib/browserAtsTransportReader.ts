@@ -33,9 +33,17 @@ export class PublicCrawlReader {
         const { platform, board, cost } = this.input, progress = this.input.progress();
         if (platform === 'adp') { cost.httpListings++; return this.input.adp.listing(board, progress.page); }
         if (!progress.transport && (progress.page > 1 || progress.loaded || progress.seen.length > 0)) progress.transport = 'browser-v1';
-        if (canUseBrowserAtsHttp(platform) && progress.transport !== 'browser-v1' && progress.browserRequired !== 'listing') {
+        // No acquired page or posting exists yet, so updated HTTP readers can
+        // safely retry an old initial handoff without reinterpreting any cursor.
+        const untouched = progress.page === 1 && !progress.loaded && !progress.queue.length && !progress.seen.length
+            && !progress.signatures.length && !progress.pageUrl && !progress.next && !progress.offset && !progress.detailFailures?.length;
+        if (canUseBrowserAtsHttp(platform) && (untouched || progress.transport !== 'browser-v1' && progress.browserRequired !== 'listing')) {
             const listing = await this.input.http.page(platform, board, progress.page, progress.pageUrl);
-            if (listing) { cost.httpListings++; progress.transport = 'http-v1'; return listing; }
+            if (listing) {
+                cost.httpListings++; progress.transport = 'http-v1';
+                delete progress.browserRequired; this.httpDetailsAvailable = true;
+                return listing;
+            }
             // HTTP pagination cannot become browser pagination midway through a sweep.
             if (progress.transport === 'http-v1') throw Error('Public HTTP listing unavailable; preserving its exact traversal for retry');
             this.httpDetailsAvailable = false;
@@ -50,7 +58,10 @@ export class PublicCrawlReader {
         const { platform, board, cost } = this.input;
         if (platform === 'adp') { cost.httpDetails++; return this.input.adp.detail(board, link); }
         if (canUseBrowserAtsHttpDetail(platform) && this.httpDetailsAvailable) {
-            const detail = await this.input.http.detail(platform, board, link);
+            const progress = this.input.progress();
+            const savedCatalogue = platform === 'paycom' && progress.transport === 'http-v1' && progress.loaded
+                && progress.page === 1 && !progress.next && progress.total === progress.queue.length ? progress.queue : undefined;
+            const detail = await this.input.http.detail(platform, board, link, savedCatalogue);
             if (detail) { cost.httpDetails++; return detail; }
             this.httpDetailsAvailable = false;
         }

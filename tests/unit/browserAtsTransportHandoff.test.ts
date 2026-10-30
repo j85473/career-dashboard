@@ -40,9 +40,9 @@ test('an unsupported initial listing hands off the unchanged initial position an
     const saved = readBrowserSweep(JSON.parse(JSON.stringify(progress)), 'icims', board);
     assert.equal(publicCrawlLaneAllows('icims', 'http', { status: 'partial', progress: saved }), false);
     assert.equal(publicCrawlLaneAllows('icims', 'browser', { status: 'partial', progress: saved }), true);
-    const browser = reader(saved, true);
+    const browser = reader(saved, true, null);
     await browser.instance.listing();
-    assert.deepEqual(browser.calls, ['browser-open', 'browser-listing']);
+    assert.deepEqual(browser.calls, ['http-listing', 'browser-open', 'browser-listing']);
     assert.equal(saved.transport, 'browser-v1');
 });
 
@@ -71,7 +71,7 @@ test('an established HTTP listing failure retains its exact traversal for retry 
 });
 
 test('legacy page numbers and loaded legacy queues remain under the browser owner across restart', async () => {
-    for (const patch of [{ page: 3 }, { loaded: true }, { seen: ['42'] }, { transport: 'browser-v1' as const }]) {
+    for (const patch of [{ page: 3 }, { loaded: true }, { seen: ['42'] }, { transport: 'browser-v1' as const, signatures: ['saved-page'] }]) {
         const progress = { ...newBrowserSweep(board), ...patch };
         assert.equal(publicCrawlLaneAllows('icims', 'http', { status: 'partial', progress }), false);
         assert.equal(publicCrawlLaneAllows('icims', 'browser', { status: 'partial', progress }), true);
@@ -110,4 +110,22 @@ test('shared provider checkpoints retain separate fairness clocks across HTTP tu
     const next = crawlLaneCheckpoint(checkpoint, 'browser', new Date('2026-10-21T14:30:00Z'));
     assert.equal(crawlLaneStart(next, 'http')?.toISOString(), crawlLaneStart(checkpoint, 'http')?.toISOString());
     for (const bad of [null, [], {}, { crawlLaneStarts: [] }, { crawlLaneStarts: { browser: 'invalid' } }]) assert.equal(crawlLaneStart(bad, 'browser'), null);
+});
+
+
+test('updated HTTP readers recover only untouched initial handoffs and preserve acquired browser work', async () => {
+    for (const transport of [undefined, 'browser-v1'] as const) {
+        const progress = { ...newBrowserSweep(board), transport, browserRequired: 'listing' as const };
+        const worker = reader(progress, true);
+        assert.equal(await worker.instance.listing(), page);
+        assert.deepEqual(worker.calls, ['http-listing']);
+        assert.equal(progress.transport, 'http-v1'); assert.equal(progress.browserRequired, undefined);
+    }
+    for (const patch of [{ queue: [link] }, { signatures: ['old'] }, { pageUrl: board }, { page: 2 }, { seen: ['42'] }]) {
+        const progress = { ...newBrowserSweep(board), transport: 'browser-v1' as const, browserRequired: 'listing' as const, ...patch };
+        const before = structuredClone(progress), worker = reader(progress, true);
+        await worker.instance.listing();
+        assert.deepEqual(worker.calls, ['browser-open', 'browser-listing']);
+        assert.deepEqual(progress, before);
+    }
 });

@@ -1,3 +1,5 @@
+import { icimsListingUrl, icimsPublicListing } from './icimsPublicListing';
+import { assertPublicBoardAvailable } from './publicBoardAvailability';
 import { PaycomPublicHttp } from './paycomPublicHttp';
 import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
@@ -17,20 +19,6 @@ const companyName = (value: unknown): value is string => typeof value === 'strin
     && value.length < 200 && /[a-z]/i.test(value) && !/^(?:unknown(?: company)?|company|careers?|jobs?|paylocity)$/i.test(value.trim());
 export const canUseBrowserAtsHttp = (platform: string): boolean => platform === 'paylocity' || platform === 'icims' || platform === 'paycom';
 export const canUseBrowserAtsHttpDetail = (platform: string): boolean => canUseBrowserAtsHttp(platform) || platform === 'brassring';
-
-function icimsListingUrl(value: string, board: string, page: number): URL | null {
-    try {
-        const url = new URL(value);
-        if (browserAtsBoardFromUrl('icims', url.href) !== board || !/^\/jobs\/search\/?$/i.test(url.pathname)) return null;
-        for (const [key, entry] of url.searchParams) {
-            if (!['pr', 'in_iframe', 'ss', 'schemaId', 'o'].includes(key) || url.searchParams.getAll(key).length !== 1) return null;
-            if (['schemaId', 'o'].includes(key) && entry !== '') return null;
-            if (['in_iframe', 'ss'].includes(key) && entry !== '1') return null;
-            if (key === 'pr' && !/^\d+$/.test(entry)) return null;
-        }
-        return Number(url.searchParams.get('pr') || '0') === page - 1 ? url : null;
-    } catch { return null; }
-}
 
 /** Parse only JSON emitted by the public page; never execute page scripts. */
 export function publicPageData(html: string): Record<string, unknown> | null {
@@ -80,7 +68,9 @@ export class BrowserAtsHttpReader {
         const previous = this.catalogues.get(board);
         if (previous) return previous;
         const doc = await this.document(board);
-        if (!doc || browserAtsBoardFromUrl('paylocity', doc.url) !== board) return null;
+        if (!doc) return null;
+        assertPublicBoardAvailable('paylocity', doc);
+        if (browserAtsBoardFromUrl('paylocity', doc.url) !== board) return null;
         const data = publicPageData(doc.html);
         if (!data || data.ShowInternal !== false || !companyName(data.ModuleTitle)
             || !Array.isArray(data.Jobs) || data.Jobs.length > PAGE_SIZE) return null;
@@ -138,45 +128,14 @@ export class BrowserAtsHttpReader {
         // Apply the same scope guard after redirects; a matching employer host
         // and plausible final-page markup do not prove an unfiltered catalogue.
         if (!doc || !icimsListingUrl(doc.url, board, page)) return null;
-        const $ = cheerio.load(doc.html), title = $('title').text().trim();
-        if (!/^Job Listings at .+/i.test(title) || !$('.iCIMS_JobsTable').length) return null;
-        const links = new Map<string, BrowserPostingLink>();
-        $('.iCIMS_JobsTable a[href]').each((_, node) => {
-            const heading = $(node).find('h3').first().text().trim();
-            const link = browserPostingLink(platform, board, $(node).attr('href')!, heading || $(node).text());
-            if (link && heading) link.titleVerified = true;
-            if (link) links.set(link.id, link);
-        });
-        if (!links.size || links.size > PAGE_SIZE || $('.iCIMS_JobsTable .iCIMS_JobCardItem').length !== links.size) return null;
-        const paging = $('.iCIMS_Paging');
-        const position = /Page\s+(\d+)\s+of\s+(\d+)/i.exec(paging.find('.selected').text().replace(/\s+/g, ' '));
-        if (!position || Number(position[1]) !== page || Number(position[2]) < page) return null;
-        const next = paging.find('a[href]').toArray().filter(node => {
-            const control = $(node);
-            return /Next page of results/i.test(control.text() + ' ' + (control.attr('aria-label') || ''))
-                && !control.is('.invisible,[hidden],[disabled],[aria-disabled="true"]')
-                && !control.parents('[hidden]').length;
-        });
-        let nextUrl: string | null = null;
-        if (Number(position[2]) > page) {
-            if (!next.length) return null;
-            let hrefs: string[];
-            try { hrefs = [...new Set(next.map(node => new URL($(node).attr('href')!, doc.url).href))]; }
-            catch { return null; }
-            if (hrefs.length !== 1 || browserAtsBoardFromUrl(platform, hrefs[0]) !== board) return null;
-            const published = icimsListingUrl(hrefs[0], board, page + 1);
-            if (!published) return null;
-            nextUrl = published.href;
-        } else if (next.length) return null;
-        const result = [...links.values()];
-        return { links: result, signature: signature(result), total: null, next: nextUrl ? { kind: 'url', url: nextUrl } : null };
+        return icimsPublicListing(doc, board, page);
     }
 
-    async detail(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink): Promise<BrowserPosting | null> {
+    async detail(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink, savedCatalogue?: BrowserPostingLink[]): Promise<BrowserPosting | null> {
         await this.check();
         if (!canUseBrowserAtsHttpDetail(platform) || browserAtsBoardFromUrl(platform, board) !== board
             || browserPostingLink(platform, board, link.url)?.id !== link.id) return null;
-        if (platform === 'paycom') return this.paycom.detail(board, link);
+        if (platform === 'paycom') return this.paycom.detail(board, link, savedCatalogue);
         if (platform === 'brassring') return this.brassring.detail(board, link);
         const catalogue = platform === 'paylocity' ? await this.paylocityCatalogue(board) : null;
         if (platform === 'paylocity' && !catalogue?.links.some(item => item.id === link.id)) return null;

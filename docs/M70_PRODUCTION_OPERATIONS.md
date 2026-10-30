@@ -566,11 +566,25 @@ are first collections only when saved state and historical receipts show no
 genuine failure. This is a selection correction, not a database reset.
 No saved dates, posting IDs, scores or failure counters are rewritten.
 
-Paycom public HTTP collection accepts complete catalogues of at most 50 jobs,
+Paycom public HTTP collection accepts complete catalogues of at most 2,000 jobs,
 using anonymous credentials issued by the employer public page. Credentials
-stay in memory. Catalogue totals, unique job IDs, external visibility and
-matching employer details are verified; larger or uncertain boards retain
-browser collection. Existing browser traversals keep their pagination meaning.
+stay in memory. The reader enumerates 50-job API pages, verifies stable totals,
+unique IDs and a repeated first page, then saves the entire catalogue as one
+queue. Resumed turns use that saved membership and employer-verified details;
+they do not reinterpret vendor offsets against a changed catalogue. The normal
+50-posting turn limit still applies. Oversized or inconsistent catalogues retain
+browser collection. Existing acquired browser traversals keep their pagination
+meaning; only initial handoffs with no loaded page, IDs or pagination evidence
+can retry the updated HTTP reader.
+
+The iCIMS reader accepts both published page-position templates, employer title
+prefixes and the vendor's default `searchRelation=keyword_all` pagination
+parameter. Explicit branded empty results require an unfiltered first-page
+search form. Missing page positions, conflicting page counts and filtered or
+foreign continuations still fail verification. Paylocity's explicit
+`JobNotFound` redirect is an unavailable-board retry without browser waiting,
+not an empty or completed crawl. Existing records remain intact and the usual
+weekly unavailable-board backoff applies prospectively.
 
 The receipt benchmark now separates distinct completed boards and first-ever
 completed collections from repeated completion turns. First-collection metrics
