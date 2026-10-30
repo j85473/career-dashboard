@@ -118,8 +118,15 @@ async function findJobIdsByDescription(
   query: string,
   statuses: readonly AdvancedJobSearchStatus[] = [],
   locationValues: string[] | null = null,
+  companyTerms: string[] = [],
 ): Promise<string[]> {
   const statusCondition = descriptionStatusSql(statuses);
+  // Narrow by employer before the description cap so newer matches at other
+  // companies cannot crowd out the company the user asked for.
+  const companyCondition = companyTerms.length === 0 ? Prisma.empty : Prisma.sql`AND (${Prisma.join(
+    companyTerms.map((term) => Prisma.sql`strpos(lower("company"), lower(${term})) > 0`),
+    ' AND ',
+  )})`;
   // Apply geography before the 500-description limit so local matches cannot
   // be crowded out by newer jobs elsewhere. One JSON bind avoids parameter limits.
   const locationCondition = locationValues === null ? Prisma.empty : Prisma.sql`AND "location" IN (
@@ -131,6 +138,7 @@ async function findJobIdsByDescription(
        WHERE "createdAt" >= now() - make_interval(days => ${DESCRIPTION_RECENT_WINDOW_DAYS}::int)
          ${statusCondition}
          ${locationCondition}
+         ${companyCondition}
          AND to_tsvector('english', "description") @@ websearch_to_tsquery('english', ${query})
     )
     SELECT "id" FROM matches ORDER BY "createdAt" DESC LIMIT ${DESCRIPTION_MATCH_LIMIT}
@@ -143,6 +151,7 @@ async function findJobIdsByDescription(
        WHERE to_tsvector('english', "description") @@ websearch_to_tsquery('english', ${query})
          ${statusCondition}
          ${locationCondition}
+         ${companyCondition}
     )
     SELECT "id" FROM matches ORDER BY "createdAt" DESC LIMIT ${DESCRIPTION_MATCH_LIMIT}
   `;
@@ -195,6 +204,11 @@ async function searchJobs(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = (searchParams.get('q') || '').trim();
+    const companyQuery = (searchParams.get('companyQuery') || '').trim();
+    const companyTerms = companyQuery.split(/\s+/).filter(Boolean).slice(0, 8);
+    const companyQueryCondition: Prisma.JobWhereInput = {
+      AND: companyTerms.map((term) => ({ company: { contains: term, mode: 'insensitive' as const } })),
+    };
     const companyCondition = await companyJobsWhere(searchParams.get('company'), prisma);
     const status = searchParams.get('status');
     const logTab = searchParams.get('logTab') || 'aim_fit';
@@ -212,7 +226,7 @@ async function searchJobs(request: Request) {
       return NextResponse.json({ error: 'Invalid advanced search options.' }, { status: 400 });
     }
 
-    if (!companyCondition && !locationFilter && query.length < 2) {
+    if (!companyCondition && !locationFilter && query.length < 2 && companyQuery.length < 2) {
       return NextResponse.json({
         jobs: [],
         pagination: { page: 1, limit, total: 0, totalPages: 1, hasMore: false },
@@ -246,6 +260,7 @@ async function searchJobs(request: Request) {
     const locationValues = locationFilter
       ? await jobLocationSearchValues(locationFilter, { AND: [
         scopedStatusCondition,
+        companyQueryCondition,
         ...(exactJobId ? [{ id: exactJobId }] : []),
         companyCondition || (query && (field === 'title' || field === 'company')
           ? fieldSearchWhere(field, terms, [], query, []) : {}),
@@ -253,7 +268,7 @@ async function searchJobs(request: Request) {
       : null;
     const descriptionMatchIds = companyCondition || !searchesDescriptions || !query
       ? []
-      : await findJobIdsByDescription(query, descriptionStatuses, locationValues);
+      : await findJobIdsByDescription(query, descriptionStatuses, locationValues, companyTerms);
     const sourceUrlMatchIds = query && !exactJobId && !companyCondition && (field === 'url' || field === 'all')
       ? await jobSourceUrlMatchIds(query, prisma)
       : [];
@@ -269,6 +284,7 @@ async function searchJobs(request: Request) {
       AND: [
         scopedStatusCondition,
         searchCondition,
+        companyQueryCondition,
         ...(locationValues === null ? [] : [{ location: { in: locationValues } }]),
       ],
     };

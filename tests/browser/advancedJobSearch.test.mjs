@@ -37,6 +37,67 @@ before(async () => {
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
 
+test('title and company combine with queues and location, persist on load more, and clear together', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  const requests = [];
+  await page.route('**/api/**', route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/ats-companies') return route.fulfill({ json: { companies: [], platforms: [] } });
+    requests.push(url.searchParams);
+    const number = Number(url.searchParams.get('page'));
+    return route.fulfill({ json: {
+      jobs: [{ id: `job-${number}`, status: 'applied' }],
+      pagination: { page: number, total: 2, hasMore: number === 1 },
+    } });
+  });
+  await page.goto(origin);
+  const query = page.getByLabel('Search terms', { exact: true });
+  const company = page.getByLabel('Company name', { exact: true });
+  await query.fill('channel manager');
+  await company.fill('  Acme Inc  ');
+  await page.getByRole('button', { name: 'Job titles', exact: false }).click();
+  await page.getByLabel('Applied', { exact: true }).check();
+  await page.getByLabel('City, state, or ZIP code', { exact: true }).fill('55405');
+  await company.press('Enter');
+  await page.getByText('1 of 2', { exact: true }).waitFor();
+  await page.getByText('Company: “Acme Inc”', { exact: false }).waitFor();
+  // Editing the form must not change the submitted filters for the next page.
+  await company.fill('Another company');
+  await page.getByRole('button', { name: 'Load more', exact: false }).click();
+  await page.getByText('2 of 2', { exact: true }).waitFor();
+  for (const params of requests) {
+    assert.equal(params.get('q'), 'channel manager');
+    assert.equal(params.get('field'), 'title');
+    assert.equal(params.get('companyQuery'), 'Acme Inc');
+    assert.equal(params.get('statuses'), 'applied');
+    assert.equal(params.get('location'), '55405');
+  }
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1100 });
+    const bounds = await page.locator('.advanced-query-row input, .advanced-query-row button').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+    assert.ok(bounds.every(bound => bound.left >= 0 && bound.right <= width), `search fields fit at ${width}px`);
+  }
+  if (process.env.SEARCH_SCREENSHOT_DIR) {
+    await page.screenshot({ path: `${process.env.SEARCH_SCREENSHOT_DIR}/company-search-mobile.png`, fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.screenshot({ path: `${process.env.SEARCH_SCREENSHOT_DIR}/company-search-desktop.png`, fullPage: true });
+  }
+  await page.getByRole('button', { name: 'Clear results', exact: true }).click();
+  assert.equal(await query.inputValue(), '');
+  assert.equal(await company.inputValue(), '');
+  await company.fill('Acme');
+  await page.getByRole('button', { name: 'Search jobs', exact: true }).click();
+  await page.getByText('1 of 2', { exact: true }).waitFor();
+  assert.equal(requests.at(-1).get('q'), '');
+  assert.equal(requests.at(-1).get('companyQuery'), 'Acme');
+  await company.fill('');
+  await query.fill('manager');
+  await page.getByRole('button', { name: 'Search jobs', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.advanced-job-results[aria-busy="true"]'));
+  assert.equal(requests.at(-1).get('companyQuery'), null);
+  await page.close();
+});
+
 test('full URLs are submitted intact in Everything and Job URLs with inclusive queue filters', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const requests = [];

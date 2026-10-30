@@ -755,8 +755,10 @@ body {
 .advanced-job-search-heading, .advanced-results-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .advanced-job-search-heading { margin-bottom: 22px; }
 .advanced-kicker { display: block; margin-bottom: 7px; color: var(--accent); font: 700 10px 'JetBrains Mono', monospace; letter-spacing: .12em; text-transform: uppercase; }
-.advanced-query-row > label, .advanced-option-group legend { color: var(--text); font-size: 12px; font-weight: 650; }
-.advanced-query-row > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: stretch; margin-top: 8px; }
+.advanced-query-row label, .advanced-option-group legend { color: var(--text); font-size: 12px; font-weight: 650; }
+.advanced-query-row > div { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.advanced-query-row label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.advanced-query-row > p { margin-top: 10px; font-size: 12px; line-height: 1.5; }
 .advanced-query-row .feedback-input { min-width: 0; margin: 0; padding: 11px 13px; font-size: 14px; }
 .advanced-query-row .btn { min-width: 110px; }
 .advanced-option-group { min-width: 0; margin-top: 22px; padding: 0; border: 0; }

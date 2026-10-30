@@ -27,6 +27,7 @@ interface AdvancedSearchTabProps {
 
 interface JobSearchRequest {
   query: string;
+  companyQuery: string;
   field: AdvancedJobSearchField;
   statuses: AdvancedJobSearchStatus[];
   location: string;
@@ -108,6 +109,7 @@ function selectedPlatform(id: string): string {
 
 export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTabProps) {
   const [jobQuery, setJobQuery] = useState('');
+  const [jobCompanyQuery, setJobCompanyQuery] = useState('');
   const [jobLocation, setJobLocation] = useState('');
   const [jobRadius, setJobRadius] = useState('25');
   const [jobLocationLabel, setJobLocationLabel] = useState('');
@@ -163,6 +165,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
         page: String(page),
         limit: '48',
       });
+      if (request.companyQuery) params.set('companyQuery', request.companyQuery);
       if (request.statuses.length > 0) params.set('statuses', request.statuses.join(','));
       if (request.location) {
         params.set('location', request.location);
@@ -215,9 +218,10 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
   const handleJobSearchSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const query = jobQuery.trim();
-    if (query.length < 2 && !jobLocation.trim()) return;
+    if (query.length < 2 && jobCompanyQuery.trim().length < 2 && !jobLocation.trim()) return;
     const request: JobSearchRequest = {
       query,
+      companyQuery: jobCompanyQuery.trim(),
       field: jobSearchField,
       statuses: [...jobStatuses],
       location: jobLocation.trim(),
@@ -552,6 +556,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
               onClick={() => {
                 jobSearchAbortRef.current?.abort();
                 setJobQuery('');
+                setJobCompanyQuery('');
                 setJobLocation('');
                 setJobRadius('25');
                 setJobLocationLabel('');
@@ -568,22 +573,39 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
 
         <form onSubmit={handleJobSearchSubmit}>
           <div className="advanced-query-row">
-            <label htmlFor="advanced-job-query">Search terms</label>
             <div>
-              <input
-                id="advanced-job-query"
-                type="search"
-                className="feedback-input"
-                placeholder={FIELD_PLACEHOLDERS[jobSearchField]}
-                value={jobQuery}
-                onChange={(event) => setJobQuery(event.target.value)}
-                minLength={2}
-                maxLength={4096}
-              />
-              <button className="btn btn-primary" type="submit" disabled={(jobQuery.trim().length < 2 && !jobLocation.trim()) || jobSearchLoading}>
+              <label htmlFor="advanced-job-query">
+                Search terms
+                <input
+                  id="advanced-job-query"
+                  type="search"
+                  className="feedback-input"
+                  placeholder={FIELD_PLACEHOLDERS[jobSearchField]}
+                  value={jobQuery}
+                  onChange={(event) => setJobQuery(event.target.value)}
+                  minLength={2}
+                  maxLength={4096}
+                />
+              </label>
+              <label htmlFor="advanced-job-company">
+                Company name
+                <input
+                  id="advanced-job-company"
+                  type="search"
+                  className="feedback-input"
+                  placeholder="Filter by company name…"
+                  value={jobCompanyQuery}
+                  onChange={(event) => setJobCompanyQuery(event.target.value)}
+                  minLength={2}
+                  maxLength={200}
+                  aria-describedby="advanced-company-help"
+                />
+              </label>
+              <button className="btn btn-primary" type="submit" disabled={(jobQuery.trim().length < 2 && jobCompanyQuery.trim().length < 2 && !jobLocation.trim()) || jobSearchLoading}>
                 {jobSearchLoading ? 'Searching…' : 'Search jobs'}
               </button>
             </div>
+            <p id="advanced-company-help">Optional. To search by title and company together, choose Job titles below and fill in both boxes.</p>
           </div>
 
           <fieldset className="advanced-option-group">
@@ -677,6 +699,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
                 ? 'All jobs'
                 : lastJobSearch.statuses.map((status) => ADVANCED_JOB_STATUS_FILTERS.find((option) => option.value === status)?.label || status).join(' + ')}
               {lastJobSearch.query && ` · “${lastJobSearch.query}”`}
+              {lastJobSearch.companyQuery && ` · Company: “${lastJobSearch.companyQuery}”`}
               {lastJobSearch.location && ` · ${jobLocationLabel || lastJobSearch.location}`}
             </p>
           </div>
