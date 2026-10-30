@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { firstCollectionHealth } from '../src/lib/atsFirstCollectionAdmission';
+import { publicCrawlCapacity } from '../src/lib/publicCrawlCapacity';
 import { browserPauseActive } from '../src/lib/browserAtsWorker';
 import { nextCrawlBoard, nextCrawlRefreshAt } from '../src/lib/atsCrawlingSchedule';
 import { prisma } from '../src/lib/prisma';
@@ -47,7 +47,7 @@ async function runGustoSweep(
   const check = async () => {
     if (Date.now() - lastSafetyCheck < 2000) return;
     const state = await prisma.pipelineState.findUnique({ where: { id: 'global' }, select: { schedulePaused: true, pausedUntil: true } });
-    if (browserPauseActive(state) || !(await firstCollectionHealth(prisma,25,5242880)).healthy) throw Error('Waiting for operator pause or ingestion capacity');
+    if (browserPauseActive(state) || !(await publicCrawlCapacity(prisma)).healthy) throw Error('Waiting for operator pause or ingestion capacity');
     lastSafetyCheck = Date.now();
   };
   // Respect operator intent before consuming the shared browser session.
