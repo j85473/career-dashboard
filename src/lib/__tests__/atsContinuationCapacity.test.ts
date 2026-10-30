@@ -155,3 +155,31 @@ test('continuations cannot occupy the producer slot reserved for fresh cohort co
   assert.equal(listings, 2);
   assert.equal(await withAtsListingCapacity(transaction, now, ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, claim), null);
 });
+
+test('pressure finishes the nearest healthy saved catalogue while retaining retry and lease eligibility', async () => {
+  const guards: Prisma.AtsIngestionBatchWhereInput = {
+    acquisitionPhase: 'listing', OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
+    AND: [{ acquisitionClaimToken: null }],
+  };
+  const client = { atsIngestionBatch: {
+    findMany: async (args: { where: Prisma.AtsIngestionBatchWhereInput; take: number }) => {
+      assert.equal(args.where.OR, guards.OR);
+      assert.deepEqual(args.where.AND, [...guards.AND as [],
+        { listingOffset: { gt: 0 }, latestObservedTotal: { gt: 0 }, lastError: null }]);
+      assert.equal(args.take, 64);
+      return [
+        { id: 'large', acquisitionPhase: 'listing', listingOffset: 5000, latestObservedTotal: 10000 },
+        { id: 'nearly-finished', acquisitionPhase: 'listing', listingOffset: 9000, latestObservedTotal: 9050 },
+        { id: 'drifting-total', acquisitionPhase: 'listing', listingOffset: 500, latestObservedTotal: 450 },
+      ];
+    }, findFirst: async () => { throw new Error('Should use existing productive work'); },
+  } } as unknown as Parameters<typeof findAtsContinuationCandidate>[0];
+  assert.equal((await findAtsContinuationCandidate(client, guards, [], now, true))?.id, 'nearly-finished');
+});
+
+test('pressure falls back to ordinary fairness when no healthy known-total catalogue exists', async () => {
+  const client = { atsIngestionBatch: {
+    findMany: async () => [], findFirst: async () => ({ id: 'fair-fallback', acquisitionPhase: 'listing' }),
+  } } as unknown as Parameters<typeof findAtsContinuationCandidate>[0];
+  assert.equal((await findAtsContinuationCandidate(client, { acquisitionPhase: 'listing' }, [], now, true))?.id, 'fair-fallback');
+});

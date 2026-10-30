@@ -581,7 +581,7 @@ export async function claimNextAtsV2Continuation(input: {
     { nextAcquireAt: { sort: 'asc', nulls: 'first' } },
     { createdAt: 'asc' },
   ];
-  const findCandidate = (where: Prisma.AtsIngestionBatchWhereInput) => findAtsContinuationCandidate(client, where, orderBy, now);
+  const findCandidate = (where: Prisma.AtsIngestionBatchWhereInput) => findAtsContinuationCandidate(client, where, orderBy, now, input.listingConcurrencyLimit !== undefined);
   // A listing batch ignored past the starvation floor outranks drain work. A
   // batch that has never been served has a null lastServedAt and qualifies at
   // once, which is what lets a fresh board start listing at all while a steady
@@ -646,8 +646,25 @@ export async function findAtsContinuationCandidate(
   where: Prisma.AtsIngestionBatchWhereInput,
   orderBy: Prisma.AtsIngestionBatchOrderByWithRelationInput[],
   now: Date,
+  pressured = false,
 ) {
   const select = { id: true, acquisitionPhase: true };
+  if (pressured && where.acquisitionPhase === 'listing') {
+    // Bound the candidate sample and retain every retry/lease predicate.
+    // Small remaining catalogues release their staged work soonest. Unknown
+    // totals retain ordinary fairness rather than masquerading as nearly done.
+    const candidates = await client.atsIngestionBatch.findMany({
+      where: { ...where, AND: [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        { listingOffset: { gt: 0 }, latestObservedTotal: { gt: 0 }, lastError: null },
+      ] }, orderBy, take: 64,
+      select: { ...select, listingOffset: true, latestObservedTotal: true, lastServedAt: true },
+    });
+    const nearest = candidates.filter(c => c.latestObservedTotal !== null && c.latestObservedTotal >= c.listingOffset)
+      .sort((a, b) => (a.latestObservedTotal! - a.listingOffset) - (b.latestObservedTotal! - b.listingOffset)
+        || (a.lastServedAt?.getTime() || 0) - (b.lastServedAt?.getTime() || 0))[0];
+    if (nearest) return { id: nearest.id, acquisitionPhase: nearest.acquisitionPhase };
+  }
   const today = await client.atsIngestionBatch.findFirst({
     where: { ...where, board: { status: 'active', ...atsRotationCohortWhere(rotationDayFor(now)) } }, orderBy, select,
   });
@@ -1327,6 +1344,7 @@ export function emptyAtsListingResponseOverlay(
 export async function resolveNextAtsV2ObservationChunk(input: {
   claim: AtsLedgerClaim;
   chunkSize?: number;
+  allowListingPrefix?: boolean;
 }): Promise<{ resolved: number; retained: number; compacted: number; complete: boolean }> {
   const chunkSize = Math.max(1, Math.min(
     ATS_LEDGER_OBSERVATION_CHUNK_SIZE,
@@ -1353,7 +1371,11 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       },
     });
     assertClaimMatchesBatch(batch, input.claim, now);
-    if (batch.acquisitionPhase !== 'compaction') {
+    const prefix = input.allowListingPrefix === true && batch.acquisitionPhase === 'listing';
+    if (prefix && await transaction.atsIngestionPage.count({ where: {
+      batchId: batch.id, generation: batch.activeLedgerGeneration, materializationCompleteAt: null,
+    } }) > 0) return { resolved: 0, retained: 0, compacted: 0, complete: false };
+    if (batch.acquisitionPhase !== 'compaction' && !prefix) {
       return { resolved: 0, retained: 0, compacted: 0, complete: batch.acquisitionPhase !== 'listing' };
     }
     const observations = await transaction.atsListingObservation.findMany({
@@ -1370,6 +1392,7 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       if (resolvedCount !== batch.rawObservationCount) {
         throw new AtsLedgerAuthorityError(`ATS batch ${batch.id} observation counts do not reconcile.`);
       }
+      if (prefix) return { resolved: 0, retained: 0, compacted: 0, complete: false };
       await transaction.atsIngestionBatch.update({
         where: { id: batch.id },
         data: {
@@ -1475,8 +1498,8 @@ export async function resolveNextAtsV2ObservationChunk(input: {
         canonicalOccurrenceCount: nextCanonical,
         compactedOccurrenceCount: nextCompacted,
         ...(invalidResponses > 0 ? { terminalItemCount: { increment: invalidResponses } } : {}),
-        acquisitionPhase: complete ? 'enrichment' : 'compaction',
-        manifestHash: complete ? atsLedgerHash({
+        acquisitionPhase: prefix ? 'listing' : complete ? 'enrichment' : 'compaction',
+        manifestHash: complete && !prefix ? atsLedgerHash({
           generation: batch.activeLedgerGeneration,
           raw: batch.rawObservationCount,
           canonical: nextCanonical,
@@ -1499,7 +1522,7 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       resolved: observations.length,
       retained: items.length,
       compacted: compactedIndexes.size,
-      complete,
+      complete: complete && !prefix,
     };
   });
 }
@@ -1515,6 +1538,7 @@ function enrichmentOverlay(job: JsonObject, platform: string): JsonObject {
 export async function terminalizeAtsV2NoNetworkItems(input: {
   claim: AtsLedgerClaim;
   chunkSize?: number;
+  allowListingPrefix?: boolean;
 }): Promise<{ inspected: number; terminalized: number }> {
   const take = Math.max(1, Math.min(
     ATS_LEDGER_MARKER_CHUNK_SIZE,
@@ -1538,7 +1562,7 @@ export async function terminalizeAtsV2NoNetworkItems(input: {
       },
     });
     assertClaimMatchesBatch(batch, input.claim, now);
-    if (batch.acquisitionPhase !== 'enrichment') return { inspected: 0, terminalized: 0 };
+    if (batch.acquisitionPhase !== 'enrichment' && !(input.allowListingPrefix && batch.acquisitionPhase === 'listing')) return { inspected: 0, terminalized: 0 };
     const items = await transaction.atsIngestionItem.findMany({
       where: {
         batchId: batch.id,
@@ -1604,6 +1628,7 @@ export async function enrichNextAtsV2DetailItem(input: {
   claim: AtsLedgerClaim;
   signal?: AbortSignal;
   requestTimeoutMs: number;
+  allowListingPrefix?: boolean;
 }): Promise<'none' | 'terminal' | 'deferred'> {
   const now = new Date();
   const item = await runLedgerTransaction(async (transaction) => {
@@ -1621,7 +1646,7 @@ export async function enrichNextAtsV2DetailItem(input: {
       },
     });
     assertClaimMatchesBatch(batch, input.claim, now);
-    if (batch.acquisitionPhase !== 'enrichment') return null;
+    if (batch.acquisitionPhase !== 'enrichment' && !(input.allowListingPrefix && batch.acquisitionPhase === 'listing')) return null;
     const candidate = await transaction.atsIngestionItem.findFirst({
       where: {
         batchId: input.claim.batchId,
@@ -1735,6 +1760,7 @@ export async function enrichNextAtsV2DetailItem(input: {
 
 export async function sealReadyAtsV2Segments(input: {
   claim: AtsLedgerClaim;
+  allowListingPrefix?: boolean;
 }): Promise<{ sealedSegments: number; sealedItems: number; complete: boolean }> {
   return runLedgerTransaction(async (transaction) => {
     await authorizeAtsV2LifecycleWrite(transaction);
@@ -1749,6 +1775,7 @@ export async function sealReadyAtsV2Segments(input: {
         acquisitionClaimToken: true,
         acquisitionClaimFence: true,
         acquisitionLeaseExpiresAt: true,
+        acquisitionPhase: true,
         canonicalOccurrenceCount: true,
         terminalItemCount: true,
         sealedItemCount: true,
@@ -1760,6 +1787,13 @@ export async function sealReadyAtsV2Segments(input: {
       },
     });
     assertClaimMatchesBatch(batch, input.claim, now);
+    const prefix = batch.acquisitionPhase === 'listing';
+    if (prefix && !input.allowListingPrefix) return { sealedSegments: 0, sealedItems: 0, complete: false };
+    // A tail segment can grow when later pages arrive. Seal only full ranges
+    // until the listing is complete; immutable manifests must never be extended.
+    const sealableCount = prefix
+      ? Math.floor(batch.canonicalOccurrenceCount / batch.segmentSize) * batch.segmentSize
+      : batch.canonicalOccurrenceCount;
     // Select complete segments without an existing manifest, without loading
     // every unfinished segment after each five-detail quantum. The unique
     // canonical-ordinal index plus the bounded range makes COUNT = expected
@@ -1772,7 +1806,7 @@ export async function sealReadyAtsV2Segments(input: {
        WHERE item."batchId" = ${batch.id}
          AND item."ledgerGeneration" = ${batch.activeLedgerGeneration}
          AND item."canonicalOrdinal" >= 0
-         AND item."canonicalOrdinal" < ${batch.canonicalOccurrenceCount}
+         AND item."canonicalOrdinal" < ${sealableCount}
          AND item."enrichmentStatus" = 'terminal'
          AND NOT EXISTS (
            SELECT 1 FROM "AtsIngestionSegment" segment
@@ -1783,7 +1817,7 @@ export async function sealReadyAtsV2Segments(input: {
         ) candidate
        GROUP BY candidate."segmentOrdinal"
       HAVING COUNT(*) = LEAST(${batch.segmentSize}::integer,
-        ${batch.canonicalOccurrenceCount}::integer
+        ${sealableCount}::integer
           - candidate."segmentOrdinal" * ${batch.segmentSize}::integer)
        ORDER BY "segmentOrdinal"
        LIMIT ${ATS_LEDGER_SEAL_SEGMENTS_PER_PASS}
@@ -1850,16 +1884,16 @@ export async function sealReadyAtsV2Segments(input: {
     // both no-op unless the batch reads 'enrichment'. A batch that sealed
     // before its last item went terminal could therefore never seal again.
     const allItemsTerminal = batch.terminalItemCount === batch.canonicalOccurrenceCount;
-    const complete = nextSealedItems === batch.canonicalOccurrenceCount && allItemsTerminal;
+    const complete = !prefix && nextSealedItems === batch.canonicalOccurrenceCount && allItemsTerminal;
     const resetDrain = batch.operatorResetAt !== null;
     await transaction.atsIngestionBatch.update({
       where: { id: batch.id },
       data: {
         sealedItemCount: nextSealedItems,
-        acquisitionPhase: complete
+        acquisitionPhase: prefix ? 'listing' : complete
           ? 'synchronized'
           : allItemsTerminal ? 'sealing' : 'enrichment',
-        status: complete
+        status: prefix ? undefined : complete
           ? resetDrain ? 'reset_synchronized' : 'synchronized'
           : resetDrain ? 'reset_draining' : 'partial',
         synchronizedAt: complete ? now : undefined,

@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { Prisma, PrismaClient } from '../../src/lib/prismaClient';
 import { atsV2StagingSnapshot, atsV2RunnablePersistenceBacklog } from '../../src/lib/atsAcquisitionLedger';
+import { publicCrawlCapacity } from '../../src/lib/publicCrawlCapacity';
 import { firstCollectionHealth } from '../../src/lib/atsFirstCollectionAdmission';
 import { assertPrismaRehearsalUrl } from '../../src/lib/prismaRehearsal';
 import { atsListingAdmissionReservationSql } from '../../src/lib/atsAdmissionCapacity';
@@ -68,6 +69,7 @@ async function capture(run: (client: never) => Promise<unknown>) {
 }
 
 async function main() {
+  const publicHealth = await capture(client => publicCrawlCapacity(client, now));
   const pressure = await capture(client => atsV2StagingSnapshot(client, now));
   const persistence = await capture(client => atsV2RunnablePersistenceBacklog(client, now));
   const health = await capture(client => firstCollectionHealth(client, 250, 5242880, now));
@@ -83,7 +85,8 @@ async function main() {
     for (const zone of ['UTC','America/Chicago']) {
       if (!bound) console.log(`SET LOCAL TIME ZONE '${zone}';`);
       for (const [label, query, expected] of [
-        ['failed downloads retained; only productive due listings and live claims reserve capacity',pressure,'items=1080 AND "unfinishedListings"=4 AND "cohortUnfinishedListings"=4'],
+        ['public crawlers use runnable persistence independently of staged listings',publicHealth,"persistence=305 AND gate='open'"],
+        ['failed downloads retained; only productive due listings and live claims reserve capacity',pressure,'items=1080 AND "unfinishedListings"=4 AND "cohortUnfinishedListings"=0'],
         ['publication counts due segments and every processing segment',persistence,'remaining=195'],
         ['pilot capacity excludes future holds, including legacy, while reporting all retained work',health,'items=1080 AND persistence=305 AND "totalPersistence"=4305'],
         ['held work consumes pilot capacity exactly when its retry becomes due',dueHealth,'persistence=4305 AND "totalPersistence"=4305'],

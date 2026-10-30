@@ -42,6 +42,9 @@ function fixture(platform = 'greenhouse') {
   };
   const dependencies: Dependencies = {
     now: () => clock,
+    drainAtsV2ListingPrefix: async () => {
+      assert.ok(pages.every(page => page.materialized === page.responseItemCount));
+    },
     readAtsV2ListingCheckpoint: async () => ({
       pendingPage: pages.find(page => page.materialized < page.responseItemCount) || null,
       latestPage: pages.at(-1) || null,

@@ -552,7 +552,27 @@ export async function workdayPartialListingRetryAt(claim: AtsLedgerClaim, now: D
   return new Date(now.getTime() + workdayPartialRetryDelayMs(failures));
 }
 
+/** Process a bounded prefix under the same batch fence as its listing. The
+ * catalogue stays incomplete, and partial segment tails remain unsealed. */
+export async function drainAtsV2ListingPrefix(claim: AtsLedgerClaim, signal: AbortSignal | undefined, deadline: number) {
+  const until = Math.min(deadline, Date.now() + 15_000);
+  const check = () => { if (signal?.aborted) throw signal.reason || new Error('ATS prefix drain interrupted.'); };
+  check();
+  await resolveNextAtsV2ObservationChunk({ claim, allowListingPrefix: true });
+  check();
+  if (Date.now() < until) await terminalizeAtsV2NoNetworkItems({ claim, allowListingPrefix: true });
+  for (let n = 0; n < ATS_LEDGER_DETAIL_REQUEST_BUDGET && Date.now() < until; n++) {
+    check();
+    const result = await enrichNextAtsV2DetailItem({ claim, signal, allowListingPrefix: true,
+      requestTimeoutMs: Math.max(1, Math.min(10_000, until - Date.now())) });
+    if (result !== 'terminal') break;
+  }
+  check();
+  if (Date.now() < deadline) await sealReadyAtsV2Segments({ claim, allowListingPrefix: true });
+}
+
 const listingDependencies = {
+  drainAtsV2ListingPrefix,
   fetchAtsBoardPage,
   readAtsV2ListingCheckpoint,
   completeAtsV2ListingAtSavedEnd,
@@ -673,6 +693,7 @@ export async function runAtsV2ListingQuantum(
       return { yieldReason: 'materialization_budget' };
     }
   }
+  await dependencies.drainAtsV2ListingPrefix(claim, signal, startedAt + ATS_LEDGER_QUANTUM_SOFT_MS);
   for (let pageIndex = 0; pageIndex < pageBudget; pageIndex++) {
     if (signal?.aborted) throw signal.reason || new Error('ATS v2 listing interrupted.');
     if (dependencies.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {

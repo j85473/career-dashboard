@@ -8,7 +8,7 @@ import { publicAtsWorkerPlatforms, browserAtsBoardFromUrl, type BrowserAtsPlatfo
 import { browserAtsTaskDefinition } from './ingestionTaskCatalog';
 import { claimDueIngestionTask, checkpointIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from './ingestionControl';
 import { countExternalIngestionOutcome, emptyExternalIngestionCounters, externalJobAlreadyObserved, ingestExternalJob, persistExternalIngestionSourceRun } from './jobIngestion';
-import { firstCollectionHealth } from './atsFirstCollectionAdmission';
+import { publicCrawlCapacity } from './publicCrawlCapacity';
 import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
 import { BrowserPostingEvidenceError, browserPostingSourceId, type BrowserPostingLink } from './browserAtsPosting';
 import { BrowserAtsHttpReader } from './browserAtsHttp';
@@ -41,7 +41,7 @@ export async function browserCollectionAllowed(platform?: string, board?: string
         return false;
     if (policy.mode === 'pilot' && (!platform || !board || !Array.isArray(policy.pilotBoards) || !policy.pilotBoards.includes(`${platform}::${board}`)))
         return false;
-    return (await firstCollectionHealth(prisma, 25, 5242880)).healthy;
+    return (await publicCrawlCapacity(prisma)).healthy;
 }
 const asJson = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value));
 async function saveProgress(claim: ClaimedIngestionTask, platform: BrowserAtsPlatform, slug: string, progress: BrowserSweepProgress, status = 'partial', error: string | null = null, yieldAt: Date | null = null) {

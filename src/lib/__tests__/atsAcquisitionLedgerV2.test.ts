@@ -490,19 +490,18 @@ test('publication gate timestamps only real pause transitions', () => {
 test('sealing is reachable only once every item is terminal', () => {
   const ledger = source('src/lib/atsAcquisitionLedger.ts');
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
-  // The continuation quantum only terminalizes and enriches in the enrichment
-  // phase, and both ledger writers refuse to act unless the batch reads
-  // 'enrichment'. Sealing early therefore stranded the batch forever.
+  // Ordinary drain stays in enrichment while items are pending. Explicit
+  // listing-prefix work retains listing phase so future pages can still arrive.
   assert.match(dispatcher, /if \(claim\.acquisitionPhase === 'enrichment'\) \{\s+const marked = await terminalizeAtsV2NoNetworkItems/);
-  assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment'\) return \{ inspected: 0, terminalized: 0 \};/);
-  assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment'\) return null;/);
+  assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment' && !\(input\.allowListingPrefix && batch\.acquisitionPhase === 'listing'\)\) return \{ inspected: 0, terminalized: 0 \};/);
+  assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment' && !\(input\.allowListingPrefix && batch\.acquisitionPhase === 'listing'\)\) return null;/);
   assert.match(
     ledger,
     /const allItemsTerminal = batch\.terminalItemCount === batch\.canonicalOccurrenceCount;/,
   );
   assert.match(
     ledger,
-    /acquisitionPhase: complete\s+\? 'synchronized'\s+: allItemsTerminal \? 'sealing' : 'enrichment',/,
+    /acquisitionPhase: prefix \? 'listing' : complete\s+\? 'synchronized'\s+: allItemsTerminal \? 'sealing' : 'enrichment',/,
   );
   assert.doesNotMatch(ledger, /acquisitionPhase: complete \? 'synchronized' : 'sealing'/);
 });

@@ -47,6 +47,24 @@ pressure, the [continuation capacity rule](ATS_CONTINUATION_CAPACITY_BALANCING.m
 limits new listing claims to one across the shared worker pool while drain work
 exists; it does not increase that pool's eight-slot ceiling.
 
+The October 30 backlog drain update gives public HTTP/browser crawlers their
+own capacity check: operator pause, pilot policy and runtime admission gates
+still apply, and runnable persistence must leave room for a 50-posting turn.
+Unfinished API listing observations no longer block those direct writers.
+During staging pressure, listing continuations prefer healthy, retry-eligible
+saved catalogues with the fewest reported jobs remaining (from a bounded
+64-candidate fairness sample); unknown or drifting totals use normal fairness.
+
+Listing continuations also resolve a bounded prefix of fully materialized saved
+pages, terminalize eligible items, and seal complete segments before the whole
+catalogue finishes. This work shares the existing batch claim fence and uses
+at most five detail attempts within a 15-second prefix budget inside the
+45-second listing turn. Partial segment tails remain unsealed. Listing offsets,
+raw observations and sealed manifests are retained; the board stays incomplete
+until listing completion and the existing full reconciliation checks pass.
+Publication and persistence retain their existing capacity limits. No score or
+crawl reset is part of this update.
+
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 
 ### Reconciling the four-day API rotation
