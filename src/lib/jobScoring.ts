@@ -27,6 +27,7 @@ import {
 import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
 import { LOCAL_SCORING_TERMINAL_ATTEMPTS } from './localScoringPolicy';
+import { filterNewCustomerSuccessRole } from './newCustomerSuccessExclusion';
 import { employerTriageVerdict, localTriageVerdict, titleTriageVerdict } from './localTriage';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
@@ -853,6 +854,15 @@ export async function scoreJobs(
       };
       const lifecycleProtected = automatedLifecycleIsProtected(claimedJob);
 
+      // Reject new CS intake before description recovery spends any requests.
+      // This helper refuses existing Inbox work, scores, and manual selections.
+      if (await filterNewCustomerSuccessRole(claimedJob, leaseId,
+        (args) => updateLocalJobWithInvariant(args, invariantVersions))) {
+        if (onProgress) onProgress(`Locally filtered ${scoringJob.company}: customer/client success role`);
+        scoredCount++;
+        continue;
+      }
+
       // Joseph's explicit employer exclusions are independent of JD quality.
       // Check every source here so an aggregator with a thin description cannot
       // spend recovery requests or enter JD Failed before the employer is rejected.
@@ -1093,6 +1103,20 @@ export async function scoreJobs(
       const newTitle = resolvedManualMetadata.title;
       const newCompany = resolvedManualMetadata.company;
       const newLocation = resolvedManualMetadata.location;
+      // Some providers only reveal the occupation in the recovered title.
+      // Match that title while retaining the stored title in the atomic guard.
+      if (newTitle !== currentJob.title && await filterNewCustomerSuccessRole(
+        { ...currentJob, title: newTitle }, leaseId,
+        (args) => updateLocalJobWithInvariant({
+          ...args,
+          where: { ...args.where, title: currentJob.title },
+          data: { ...args.data, title: newTitle },
+        }, invariantVersions),
+      )) {
+        if (onProgress) onProgress(`Locally filtered ${newCompany}: customer/client success role`);
+        scoredCount++;
+        continue;
+      }
       const resolvedInputChanges = [
         newTitle !== currentJob.title ? 'title' : null,
         newCompany !== currentJob.company ? 'company' : null,
