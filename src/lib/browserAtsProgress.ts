@@ -1,3 +1,4 @@
+import { PAYCOM_HTTP_CATALOGUE_LIMIT } from './paycomPublicHttp';
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
 import { BrowserPostingEvidenceError, browserPostingLink, type BrowserPostingLink, type BrowserPosting } from './browserAtsPosting';
 import { BROWSER_MAX_PAGES, BROWSER_MAX_SEEN_IDS, listingSignature, type BrowserListing, type BrowserNext, type BrowserPageEnd } from './browserAtsReader';
@@ -40,7 +41,9 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
     if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)
         return newBrowserSweep(board);
     const p = value as BrowserSweepProgress;
-    if (!p || p.version !== 1 || p.board !== board || browserAtsBoardFromUrl(platform, board) !== board || !Number.isInteger(p.page) || p.page < 1 || p.page > BROWSER_MAX_PAGES || !Array.isArray(p.queue) || p.queue.length > 250 || !Number.isInteger(p.offset) || p.offset < 0 || p.offset > p.queue.length || !Array.isArray(p.seen) || p.seen.length > BROWSER_MAX_SEEN_IDS || !p.seen.every(id => typeof id === 'string') || !Array.isArray(p.signatures) || p.signatures.length > BROWSER_MAX_PAGES || !p.signatures.every(x => typeof x === 'string') || typeof p.loaded !== 'boolean')
+    const queueLimit = platform === 'paycom' && p?.transport === 'http-v1' && p.page === 1 && p.next === null && p.total === p.queue?.length
+        ? PAYCOM_HTTP_CATALOGUE_LIMIT : 250;
+    if (!p || p.version !== 1 || p.board !== board || browserAtsBoardFromUrl(platform, board) !== board || !Number.isInteger(p.page) || p.page < 1 || p.page > BROWSER_MAX_PAGES || !Array.isArray(p.queue) || p.queue.length > queueLimit || !Number.isInteger(p.offset) || p.offset < 0 || p.offset > p.queue.length || !Array.isArray(p.seen) || p.seen.length > BROWSER_MAX_SEEN_IDS || !p.seen.every(id => typeof id === 'string') || !Array.isArray(p.signatures) || p.signatures.length > BROWSER_MAX_PAGES || !p.signatures.every(x => typeof x === 'string') || typeof p.loaded !== 'boolean')
         throw Error('Invalid durable public-board progress; preserving it for review');
     if (p.lastProductiveAt !== undefined && (typeof p.lastProductiveAt !== 'string' || !Number.isFinite(Date.parse(p.lastProductiveAt))))
         throw Error('Invalid saved productivity date');
@@ -52,7 +55,7 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
         throw Error('Saved page escaped board identity');
     if (p.queue.some(l => !l || typeof l.id !== 'string' || typeof l.url !== 'string' || typeof l.title !== 'string' || l.titleVerified !== undefined && typeof l.titleVerified !== 'boolean' || browserPostingLink(platform, board, l.url)?.id !== l.id))
         throw Error('Saved posting escaped board identity');
-    if (p.detailFailures !== undefined && (!Array.isArray(p.detailFailures) || p.detailFailures.length > 250
+    if (p.detailFailures !== undefined && (!Array.isArray(p.detailFailures) || p.detailFailures.length > queueLimit
         || p.detailFailures.length > 0 && !p.loaded
         || new Set(p.detailFailures.map(f => f?.id)).size !== p.detailFailures.length
         || p.detailFailures.some(f => !f || typeof f.id !== 'string' || typeof f.message !== 'string' || f.message.length > 500

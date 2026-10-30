@@ -1,3 +1,5 @@
+import { icimsPublicListing } from './icimsPublicListing';
+import { assertPublicBoardAvailable } from './publicBoardAvailability';
 import type { BrowserContext, Page, Locator } from 'playwright-core';
 import * as cheerio from 'cheerio';
 import { createHash } from 'node:crypto';
@@ -140,6 +142,7 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
 export function verifiedEmptyBoard(platform: BrowserAtsPlatform, docs: BrowserDocument[], board?: string): boolean {
     return docs.some(doc => {
         if (board && browserAtsBoardFromUrl(platform, doc.url) !== board) return false;
+        if (platform === 'icims' && board) return icimsPublicListing(doc, board, 1)?.emptyVerified === true;
         const $ = cheerio.load(doc.html);
         if (platform === 'freshteam') {
             // This template's empty state refers to filters even on an empty,
@@ -312,6 +315,7 @@ export class BrowserAtsReader {
     private async listingDocuments(page: Page, platform: BrowserAtsPlatform, board: string, pageNumber = 1): Promise<BrowserDocument[]> {
         for (let attempt = 0; attempt < 12; attempt++) {
             const docs = await documents(page);
+            for (const doc of docs) assertPublicBoardAvailable(platform, doc);
             const links = postingLinksFromDocuments(platform, board, docs), count = links.length;
             if (count && (platform !== 'brassring' || brassringResultsReady(docs,count))
                 && (platform !== 'taleo' || taleoPageMatches(board, docs, links, pageNumber, this.taleoPages.get(pageNumber)) || taleoResultsReady(docs,count,pageNumber))
@@ -492,6 +496,10 @@ export class BrowserAtsReader {
             }
         }
         const docs = await this.listingDocuments(page, platform, board, pageNumber);
+        if (platform === 'icims') {
+            const verified = docs.map(doc => icimsPublicListing(doc, board, pageNumber)).find(Boolean);
+            if (verified) { this.position = { platform, board, page: pageNumber }; return verified; }
+        }
         const links = postingLinksFromDocuments(platform, board, docs);
         const total = listingTotal(docs.map(d => d.text).join('\n'));
         let control = await nextControl(page, platform, pageNumber);

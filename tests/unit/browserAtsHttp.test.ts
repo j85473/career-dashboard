@@ -174,3 +174,35 @@ test('operator safety checks propagate instead of being converted into an HTTP f
     await assert.rejects(reader.page('paylocity', paylocity, 1), /Collection paused/);
     await assert.rejects(reader.detail('paylocity', paylocity, browserPostingLink('paylocity', paylocity, 'https://recruiting.paylocity.com/Recruiting/Jobs/Details/42')!), /Collection paused/);
 });
+
+test('iCIMS accepts branded title prefixes, single-page headers and default unfiltered next links', async () => {
+    const header = (p: number, count: number) => `<div class="iCIMS_SearchResultsHeader"><h2 class="iCIMS_SubHeader_Jobs">Search Results Page ${p} of ${count}</h2></div>`;
+    const single = icimsPage(1, 1).replace(/<div class="iCIMS_Paging">.*<\/div>/, header(1, 1)).replace('<title>', '<title>Careers at Example | ');
+    const start = icims + '&ss=1';
+    const first = await new BrowserAtsHttpReader(async () => {}, httpFake({ [start]: single }).fetcher).page('icims', icims, 1);
+    assert.equal(first?.links.length, 1); assert.equal(first.next, null);
+    const next = icims + '&pr=1&searchRelation=keyword_all';
+    const fake = httpFake({ [start]: icimsPage(1, 2, next) + header(1, 2), [next]: icimsPage(2, 2, undefined, [43]) + header(2, 2) });
+    const reader = new BrowserAtsHttpReader(async () => {}, fake.fetcher);
+    assert.deepEqual((await reader.page('icims', icims, 1))?.next, { kind: 'url', url: next });
+    assert.equal((await reader.page('icims', icims, 2, next))?.links[0].id, '43');
+    for (const html of [icimsPage(1, 2, next) + header(1, 3), single.replace('Page 1 of 1', 'Page 2 of 2')])
+        assert.equal(await new BrowserAtsHttpReader(async () => {}, httpFake({ [start]: html }).fetcher).page('icims', icims, 1), null);
+    assert.equal(await reader.page('icims', icims, 2, next.replace('keyword_all', 'keyword_any')), null);
+});
+
+test('iCIMS explicit empty state requires an unfiltered branded first page, not an empty shell', async () => {
+    const html = '<title>Careers | Job Listings at Example Inc</title><div class="iCIMS_Message iCIMS_ErrorMessage">Sorry, no jobs were found that match your search criteria. Please try other selections.</div><form id="searchForm"><input type="text" name="searchKeyword" value=""><select name="searchCategory"><option value="" selected>(All)</option></select></form>';
+    const start = icims + '&ss=1';
+    const read = (body: string) => new BrowserAtsHttpReader(async () => {}, httpFake({ [start]: body }).fetcher).page('icims', icims, 1);
+    assert.equal((await read(html))?.emptyVerified, true);
+    for (const bad of [html.replace('name="searchKeyword" value=""', 'name="searchKeyword" value="sales"'), html.replace('value="" selected', 'value="123" selected'), html.replace('Job Listings at Example Inc', 'Loading'), html.replace('id="searchForm"', ''), html + '<a href="/jobs/42/sales/job">Sales</a>']) assert.equal(await read(bad), null);
+});
+
+test('Paylocity explicit unavailable redirect stops before browser fallback and never reports an empty catalogue', async () => {
+    const html = '<title>Job Not Found</title><main>We\'re sorry, that job does not exist or is not currently active.</main><aside aria-label="Powered by Paylocity Logo and Link"><em>Powered by </em><img src="https://cdn.paylocity.com/cdn/branding/paylocity-logo-left.svg" alt=""></aside>';
+    const url = 'https://recruiting.paylocity.com/Recruiting/jobs/JobNotFound';
+    const read = (reply: {html:string;url:string}) => new BrowserAtsHttpReader(async () => {}, httpFake({ [paylocity]: reply }).fetcher).page('paylocity', paylocity, 1);
+    await assert.rejects(read({ html, url }), /unavailable; retain for weekly retry/);
+    for (const reply of [{ html, url: 'https://other.example/Recruiting/jobs/JobNotFound' }, { html: '<title>Job Not Found</title><main>Loading</main>', url }, { html, url: paylocity }]) assert.equal(await read(reply), null);
+});
