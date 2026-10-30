@@ -15,7 +15,9 @@ Resolve all commands relative to the checkout containing this skill. Read
 A `START-AIM-FIT-RUN-*.json`, `START-E-FIT-RUN-*.json`, `START-AIM-FIT-*.json`,
 or `START-E-FIT-*.json` supplied or explicitly referenced in the current request
 authorizes its matching stage immediately, including model transmission, runtime
-state, checkpoints, validation, and output files. A bare attachment is sufficient.
+state, checkpoints, validation, output files, and automatic import of the final
+validated result into the Dashboard. Joe has explicitly requested automatic cloud
+uploads; do not ask for separate import approval on each run. A bare attachment is sufficient.
 Do not ask for another instruction to begin. A file merely present in a workspace
 is not authorization. Setup requests do not authorize scoring real jobs.
 
@@ -109,9 +111,10 @@ automatically with an empty approved review receipt.
 
 Keep canonical results and resumable state under `data/scoring/results/`. The
 byte-identical upload copy belongs under `data/scoring/results/cloud-delivery/`;
-this is cloud task storage, not Joe's Mac Desktop. Offer the final JSON as a
-download using the host's file-attachment mechanism. If unavailable, state the
-limitation and keep the exact file available; never pretend a cloud path is local.
+this is cloud task storage, not Joe's Mac Desktop. Import the exact final copy
+automatically; Joe should not have to locate, download, or manually upload it.
+Keep the file and receipt for recovery. A downloadable copy is optional after a
+successful import, not the normal completion step. Never pretend a cloud path is local.
 Save important output before task state expires. Never commit exports, outputs,
 checkpoints, personal credentials, or Codex runtime state.
 
@@ -125,16 +128,25 @@ Preview the exact final upload JSON with POST
 Require an applicable preview, the same run/batch identity and result hash, and
 accepted/rejected/safe-failure counts matching the validated artifact. Safe-failure
 entries are allowed in a valid mixed result; do not reject the whole artifact for
-their presence. Follow existing project import-approval requirements: apply only
-with Joe's explicit import approval or an explicit standing automatic-upload
-instruction in the task. Environment setup alone is not import approval.
+their presence. An applicable, matching preview authorizes the apply step under
+Joe's standing automatic-upload instruction. Do not add a conversational approval
+gate. Setup alone still does not authorize scoring or importing an arbitrary export.
 
 Apply the exact same payload with
 `{"mode":"apply","payload":<same JSON>,"approvalToken":<preview token>}`.
 Preserve and report the import receipt. If preview conflicts or apply fails, stop;
 retain the result for recovery. Do not rescore, modify the payload, bypass preview,
-or retry a mutation blindly. If networking is unavailable, return the validated
-file for upload from the phone instead.
+or retry a mutation blindly. If networking is unavailable, retain the validated
+file and report that scoring completed but import is pending. Diagnose the cloud
+connection and request only the missing access needed to complete the transfer.
+Resume delivery of that same result after access is restored; do not rescore jobs.
+Do not send Joe searching for the file as the normal recovery step. Manual upload
+is an optional recovery path if he specifically chooses it.
+
+Report "uploaded" only after a successful Dashboard apply receipt. Report imported
+and released counts, run/batch identity, result hash, completed child batches when
+applicable, and idempotent replay status. A generated file or successful health
+probe alone is not a completed import.
 
 Report stage, run/batch ID, child count, submitted/accepted/resumed/model-call and
 safe-failure counts, validator result, Experience review disposition, canonical and

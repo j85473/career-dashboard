@@ -3,6 +3,8 @@
 This setup runs the repository's existing file-based scoring runners in Codex Cloud.
 The laptop can be off. The M70 must remain on for Dashboard access and import.
 Scoring itself needs no Dashboard database connection.
+Completed, validated runs upload to the Dashboard automatically. Joe does not need
+to locate or download a result file; the task returns the Dashboard import receipt.
 
 Prepared source branch: `codex/cloud-fit-scoring`.
 Repository: [j85473/career-dashboard](https://github.com/j85473/career-dashboard).
@@ -20,7 +22,7 @@ Local preparation is not evidence that cloud model access or VPN access works.
    workspace. Do not merge it into `main`; main pushes deploy production.
 4. Paste the setup request below. Supply account authorization only through the
    provider's sign-in or secret controls, not as messages or committed files.
-5. Publish only after the dependency check and synthetic workers pass. Test again
+5. Publish only after the dependency check, synthetic workers, and M70 connection pass. Test again
    in a **new task** from the published environment, including branch/skill
    availability after repository refresh.
 
@@ -43,10 +45,14 @@ If model access or CLI authentication is missing, report that exact blocker and
 guide me through the supported sign-in flow. Do not substitute a model or switch
 to API billing. Never copy my Mac's Codex authentication cache into the environment.
 
-If Tailscale has been configured, also run the check with
+Configure Tailscale access for automatic result uploads, then run the check with
 --dashboard-url http://100.107.116.123:3000.
 Report dependency, synthetic-worker, and Dashboard-network results separately.
-Save the tested setup and tell me when it is ready to publish.
+Completed scoring runs must automatically preview and apply their final validated
+result through the public Dashboard import API, after required Experience review.
+This is standing import authorization for supplied exports; do not ask me to find
+a file or approve each upload. Do not import any real result during environment setup.
+   Save the tested setup and tell me when it is ready to publish.
 ```
 
 ## Installation and readiness
@@ -91,7 +97,8 @@ API-key execution would use separate API billing and is not configured here.
 
 ## Connect to the M70 with Tailscale
 
-This is optional for scoring and required for direct Dashboard import.
+This connection is required for the normal automatic-upload workflow. Scoring can
+produce a result without it, but the task is not finished until import succeeds.
 
 1. In the Tailscale admin console, generate an auth key with **Reusable** and
    **Ephemeral** enabled. Use an identity/tag allowed to reach only the intended
@@ -110,8 +117,9 @@ The optional network probe is a GET of `/api/health`. It makes no scoring/import
 mutation. It verifies HTTP reachability, not the full preview/apply import flow.
 Use the configured HTTP(S) proxy; don't bypass it for the Tailscale address.
 Keep the existing Dashboard access model. Do not expose the service publicly or
-add a login screen. If the connection cannot be enabled, download results and
-import them from the phone while connected to Tailscale.
+add a login screen. If the connection fails, keep the result and report that import
+is pending. Restore the connection and transfer the same file without rescoring.
+Manual download/upload remains available if Joe chooses it as a recovery path.
 
 For internet access, allow the package registries and the Codex authentication and
 model endpoints required by the actual cloud runtime. Diagnose a blocked hostname
@@ -132,24 +140,32 @@ Existing export links use `/api/scoring/runs/<run-id>/download` or
 ```text
 Use $career-dashboard-cloud-scoring to run the supplied export's matching stage.
 Keep the other stage separate. Complete validation and required Experience review.
-Return the final upload JSON. Preview it against the Dashboard if reachable;
-ask before applying unless I have explicitly authorized automatic import.
+Automatically preview and import the final validated result into the Dashboard.
+Return the import confirmation and counts. If import fails, retain the result and
+tell me what access needs fixing; do not rerun scoring or make me find a file.
 ```
 
-Canonical results/checkpoints stay in `data/scoring/results/`. Downloadable upload
-copies use `data/scoring/results/cloud-delivery/`. They are not written to the
-Mac's Desktop. Ask the task to attach the final JSON; host file delivery must be
-verified on the actual mobile interface. Preserve/download important files before
-the task's saved state expires. New tasks have separate files; reopen the same task
-to resume an existing run. Neither setup nor publication scores existing jobs.
+Canonical results/checkpoints stay in `data/scoring/results/`. Upload copies use
+`data/scoring/results/cloud-delivery/`. They are not written to the Mac's Desktop.
+The task sends the exact final JSON to the existing preview endpoint, checks the
+identity and result counts, and applies it with the returned approval token.
+That token is part of the API flow; Joe does not need to approve each transfer.
+Experience review must finish before import, and a held review is never uploaded.
+
+The task reports completion only after the Dashboard returns a successful import
+receipt, including imported and released counts. If scoring succeeds but import
+fails, it reports **scoring complete; Dashboard import pending**, retains the
+artifact, and completes delivery after access is restored. Save important output
+before task state expires. New tasks have separate files; reopen the same task to
+resume an existing run. Neither setup nor publication scores existing jobs.
 
 ## Acceptance before relying on laptop-free scoring
 
 - A fresh published task discovers the repository skill and passes synthetic workers.
 - A supplied exact export completes through the unchanged runner and validator.
 - Experience hard mismatches receive the main agent's required semantic review.
-- The final JSON is downloadable on iPhone, or its exact approved preview/apply
-  succeeds through the public Dashboard API with a saved import receipt.
+- The exact final result automatically passes preview/apply through the public
+  Dashboard API with a saved import receipt; no manual file handling is required.
 - A second task still has the expected branch, dependencies, and supported identity.
 
 Official references, checked October 30, 2026:
