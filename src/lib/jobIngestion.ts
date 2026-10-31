@@ -3,6 +3,7 @@ import { atsRotationCohortWhere } from './atsRotationCohort';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { adpPostingIdentity, adpPostingsConflict, isAdpPostingHost, matchesAdpPosting } from './adpPostingIdentity';
 import { providerPostingLocation } from './postingLocation';
+import { recoverMissingSourceLocation } from './sourcePostingLocation';
 import { isPaylocityPostingHost, paylocityPostingId, paylocityPostingsConflict, resolvePaylocityObservation } from './paylocityPostingIdentity';
 import { recruiteePostingLocation } from './recruiteeLocation';
 import { publishedEmployerName } from './publicAtsEmployer';
@@ -1940,8 +1941,8 @@ export function parseJSearchJob(job: Record<string, unknown>): IncomingJob | nul
   const title = typeof job.job_title === 'string' ? job.job_title.trim() : '';
   const sourceId = typeof job.job_uid === 'string' ? job.job_uid.trim() : '';
   if (!title || !sourceId) return null;
-  const city = typeof job.job_city === 'string' ? job.job_city : '';
-  const state = typeof job.job_state === 'string' ? job.job_state : '';
+  const city = typeof job.job_city === 'string' ? job.job_city.trim() : '';
+  const state = typeof job.job_state === 'string' ? job.job_state.trim() : '';
   const postedAt = typeof job.job_posted_at_datetime_utc === 'string'
     ? new Date(job.job_posted_at_datetime_utc)
     : new Date();
@@ -1949,7 +1950,7 @@ export function parseJSearchJob(job: Record<string, unknown>): IncomingJob | nul
     title,
     company: typeof job.employer_name === 'string' ? job.employer_name : 'Unknown Company',
     description: typeof job.job_description === 'string' ? job.job_description : '',
-    location: `${city}, ${state}`.trim().replace(/^,|,$/g, '') || 'Unknown Location',
+    location: [city, state].filter(Boolean).join(', ') || 'Unknown Location',
     url: typeof job.job_apply_link === 'string' && job.job_apply_link
       ? job.job_apply_link
       : typeof job.job_google_link === 'string' ? job.job_google_link : '',
@@ -2541,6 +2542,8 @@ export async function ingestExternalJob(
   if (workdayDetail?.location) location = workdayDetail.location;
   const fullerDescription = selectFullerAtsDescription(description, workdayDetail?.text);
   if (fullerDescription) description = fullerDescription;
+  const locationRecovery = await recoverMissingSourceLocation({ title, company, location, url, source: input.source });
+  if (locationRecovery) location = locationRecovery.location;
   const postingIdentity = generatePostingIdentity({ source: input.source, sourceId, canonicalUrl, url });
   const identityFingerprint = generateV4Fingerprint(title, company, location);
 
@@ -2640,8 +2643,8 @@ export async function ingestExternalJob(
         queryFamily: attribution.queryFamily,
         geoLane: input.geoLane,
         details: filter.passes
-          ? { initialStatus: priorityLifecycle?.status || (appliedRepeat ? 'dismissed' : machineInitialStatus), enteredInbox: Boolean(priorityLifecycle), priorityRule: priorityLifecycle ? 'acosta_channel_sales' : null, jdReady, appliedRepeatOfJobId: appliedRepeat?.authority.id || null }
-          : { reason: filter.reason },
+          ? { initialStatus: priorityLifecycle?.status || (appliedRepeat ? 'dismissed' : machineInitialStatus), enteredInbox: Boolean(priorityLifecycle), priorityRule: priorityLifecycle ? 'acosta_channel_sales' : null, jdReady, appliedRepeatOfJobId: appliedRepeat?.authority.id || null, locationRecovery }
+          : { reason: filter.reason, locationRecovery },
         identityParts: [input.windowEnd?.toISOString() || 'external'],
       }, tx);
       if (appliedRepeat) {
@@ -4003,6 +4006,12 @@ export async function ingestJobs(
       }
     }
 
+    // Only unseen arrivals reach this point. Recover explicit source geography
+    // even when JSearch already supplied a complete JD; never update an old card.
+    const locationRecovery = !networkComplete ? await recoverMissingSourceLocation({
+      title, company, location, url: finalUrl, source,
+    }, { signal }) : null;
+    if (locationRecovery) location = locationRecovery.location;
     finalCanonicalUrl = normalizeUrl(finalCanonicalUrl);
     company = await standardizeIncomingCompany({
       company,
@@ -4156,6 +4165,7 @@ export async function ingestJobs(
             geoLane: geoLane.id,
             details: {
               reason: preFilterResult.reason,
+              locationRecovery,
               ...(atsBatchItem ? atsBatchItemAuditFields(atsBatchItem) : {}),
             },
             identityParts: [runIdentity],
@@ -4259,6 +4269,7 @@ export async function ingestJobs(
             priorityRule: priorityLifecycle ? 'acosta_channel_sales' : null,
             needsJd,
             postingClosed: enrichedPostingClosed,
+            locationRecovery,
             appliedRepeatOfJobId: appliedRepeat?.authority.id || null,
             ...(atsBatchItem ? atsBatchItemAuditFields(atsBatchItem) : {}),
           },
