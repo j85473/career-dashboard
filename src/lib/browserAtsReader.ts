@@ -1,13 +1,11 @@
 import { icimsPublicListing } from './icimsPublicListing';
 import { assertPublicBoardAvailable } from './publicBoardAvailability';
+import { AdpPublicReader } from './adpPublicReader';
 import type { BrowserContext, Page, Locator } from 'playwright-core';
 import * as cheerio from 'cheerio';
 import { createHash } from 'node:crypto';
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
 import { BrowserPostingEvidenceError, browserPostingLink, parseBrowserPosting, type BrowserDocument, type BrowserPostingLink, type BrowserPosting } from './browserAtsPosting';
-import { readBoundedAtsBody } from './tenantAtsBoards';
-import { safeExternalFetch } from './safeExternalFetch';
-import { parseAdpPosting, parseAdpClientCompany } from './adpPosting';
 import { taleoSearchPage, taleoPageMatches, taleoClassicPage, type TaleoSearchPage } from './browserTaleoEvidence';
 export type BrowserNext = {
     kind: 'url';
@@ -27,6 +25,10 @@ export type BrowserListing = {
 export type BrowserPageEnd = { kind: 'verified-final-page'; page: number; pageCount: number; advertisedTotal: number; signature: string; publicSearchPage?: TaleoSearchPage };
 export const BROWSER_MAX_PAGES = 1000;
 export const BROWSER_MAX_SEEN_IDS = 50000;
+// Compatibility for the standalone collector verification command. Workers
+// retain one reader per turn so metadata is shared across all its details.
+export const adpListing = (board: string, page: number) => new AdpPublicReader(board).listing(page);
+export const adpDetail = (board: string, link: BrowserPostingLink) => new AdpPublicReader(board).detail(link);
 /** Only HTTPS destinations can become saved navigation URLs. JavaScript
  * widget links remain on-page controls; all other schemes fail closed. */
 function paginationTarget(platform: BrowserAtsPlatform, board: string, currentUrl: string, href: string | null): BrowserNext {
@@ -550,69 +552,4 @@ export class BrowserAtsReader {
             // Reuse the detail tab within this bounded board turn. close() owns both tabs.
         }
     }
-}
-async function json(url: string, init?: RequestInit): Promise<unknown> {
-    const response = await safeExternalFetch(url, { ...init, signal: AbortSignal.timeout(20000) });
-    if (!response.ok)
-        throw Error('Public JSON HTTP ' + response.status);
-    return JSON.parse(await readBoundedAtsBody(response, 5 * 1024 * 1024));
-}
-export async function adpListing(board: string, page: number): Promise<BrowserListing> {
-    const b = new URL(board), base = new URL('/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions', b);
-    for (const key of ['cid', 'ccId', 'lang'])
-        base.searchParams.set(key, b.searchParams.get(key)!);
-    base.searchParams.set('locale', 'en_US');
-    base.searchParams.set('$top', '20');
-    if (page > 1)
-        base.searchParams.set('$skip', String((page - 1) * 20 + 1));
-    const data = await json(base.href) as {
-        jobRequisitions?: unknown[];
-        meta?: {
-            totalNumber?: unknown;
-        };
-    };
-    if (Array.isArray(data.jobRequisitions) && !data.jobRequisitions.length && data.meta?.totalNumber === undefined) throw Error('Public employer catalogue has no verifiable jobs; retain for weekly retry');
-    if (!Array.isArray(data.jobRequisitions) || typeof data.meta?.totalNumber !== 'number' || !Number.isSafeInteger(data.meta.totalNumber) || data.meta.totalNumber < 0)
-        throw Error('ADP listing schema changed');
-    const links = data.jobRequisitions.map(raw => {
-        if (!raw || typeof raw !== 'object')
-            throw Error('ADP posting schema changed');
-        const j = raw as {
-            requisitionTitle?: unknown;
-            customFieldGroup?: {
-                stringFields?: Array<{
-                    nameCode?: {
-                        codeValue?: unknown;
-                    };
-                    stringValue?: unknown;
-                }>;
-            };
-        };
-        const id = j.customFieldGroup?.stringFields?.find(f => f.nameCode?.codeValue === 'ExternalJobID')?.stringValue;
-        if (typeof id !== 'string' || !/^\d+$/.test(id) || typeof j.requisitionTitle !== 'string' || !j.requisitionTitle.trim())
-            throw Error('ADP listing has no stable published job identity');
-        const u = new URL(board);
-        u.searchParams.set('jobId', id);
-        const l = browserPostingLink('adp', board, u.href, j.requisitionTitle);
-        if (!l)
-            throw Error('ADP listing has no stable published job ID');
-        return { ...l, titleVerified: true };
-    });
-    return { links, signature: listingSignature(links), total: data.meta.totalNumber, next: page * 20 < data.meta.totalNumber ? { kind: 'click' } : null };
-}
-export async function adpDetail(board: string, link: BrowserPostingLink): Promise<BrowserPosting> {
-    const b = new URL(board), base = '/mascsr/default/careercenter/public/events/staffing/';
-    const endpoint = new URL(base + 'v1/job-requisitions/' + link.id, b);
-    for (const key of ['cid', 'ccId', 'lang'])
-        endpoint.searchParams.set(key, b.searchParams.get(key)!);
-    const body = await json(endpoint.href), posting = parseAdpPosting(body, link.url);
-    if (!posting)
-        throw Error('ADP exact posting validation failed');
-    const client = new URL(base + 'client-features', b);
-    for (const key of ['cid', 'ccId', 'lang'])
-        client.searchParams.set(key, b.searchParams.get(key)!);
-    const company = posting.company || parseAdpClientCompany(await json(client.href));
-    if (!company)
-        throw Error('ADP employer is unverified');
-    return { ...link, title: posting.title, company, description: posting.text, location: posting.location || '' };
 }

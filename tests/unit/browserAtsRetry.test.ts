@@ -16,7 +16,7 @@ test('unavailable boards retain retry eligibility with increasingly sparse check
     }
 });
 test('missing evidence gets a bounded retry and cannot turn an incomplete traversal into a completed board', () => {
-    for (const message of ['Only 243 of 245 advertised jobs enumerated; retaining progress', 'Public board did not expose verifiable posting links or an explicit empty state', 'Job detail lacks a verified employer, title, or full description: 42', 'Taleo turn exhausted its time budget without advancing saved progress; retaining cursor for retry']) {
+    for (const message of ['Only 243 of 245 advertised jobs enumerated; retaining progress', 'Public board did not expose verifiable posting links or an explicit empty state', 'Job detail lacks a verified employer, title, or full description: 42', 'Taleo turn exhausted its time budget without advancing saved progress; retaining cursor for retry', 'ADP employer is unverified', 'ADP exact posting validation failed']) {
         assert.equal(browserCrawlRetry(message, 0, now).delayMs, 6 * HOUR);
         assert.equal(browserCrawlRetry(message, 20, now).delayMs, 7 * DAY);
         assert.equal(browserCrawlRetry(message, 0, now).kind, 'incomplete');

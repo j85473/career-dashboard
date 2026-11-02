@@ -1,6 +1,8 @@
 import * as cheerio from 'cheerio';
 import type { BrowserDocument } from './browserAtsPosting';
 
+export class PublicBoardUnavailableError extends Error {}
+
 /** A vendor's explicit unavailable page is a retry, never an empty catalogue. */
 export function assertPublicBoardAvailable(platform: string, doc: BrowserDocument): void {
     if (platform !== 'paylocity') return;

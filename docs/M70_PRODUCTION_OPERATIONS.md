@@ -65,6 +65,30 @@ until listing completion and the existing full reconciliation checks pass.
 Publication and persistence retain their existing capacity limits. No score or
 crawl reset is part of this update.
 
+### Collection progress and failed public reads (November 2, 2026)
+
+Unproductive detail turns now use a board-local retry delay. Three consecutive
+turns that actually requested details without advancing any item wait five
+minutes; further unsuccessful turns wait fifteen, thirty, then at most sixty
+minutes. Durable progress resets this delay. Existing item retries and provider
+cooldowns can require a longer wait. Pending items, raw postings and saved
+positions remain intact; no board or job is retired by this rule.
+
+The ADP public reader shares configuration lookups within each board turn. If
+the client configuration omits its employer name, it follows only the career
+center's explicit corporate branding link and reads the employer's published
+website identity. A plain homepage title requires independent corroboration
+in the exact posting's description. Names are never derived from tenant IDs,
+hostnames or social links. A zero-job first page requires both an explicit zero
+total and the same career center's published indicator before completing.
+Unverified employers and posting identities retain the incomplete-evidence
+retry policy. These changes do not revisit saved scores or lifecycle choices.
+
+An HTTP 404/410 on an exact, unfiltered iCIMS listing now uses the existing
+unavailable-board retry policy without opening a browser for the same page.
+Individual posting failures, access refusals and foreign or filtered redirects
+keep their existing fallback behavior. No existing board dates are bulk-edited.
+
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 
 ### Reconciling the four-day API rotation

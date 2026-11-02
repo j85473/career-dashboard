@@ -837,13 +837,29 @@ export async function runAtsV2ListingQuantum(
   return { yieldReason: listingComplete ? 'listing_complete' : 'page_budget' };
 }
 
-/** Empty detail turns wait for retained item retries and provider cooldowns. */
+type EnrichmentTurn = { itemsProgressed: number; detailRequestCount: number; yieldReason: string | null };
+
+/** Item retries alone do not pace a board with hundreds of independently
+ * failing details: a different due item can keep it eligible every minute.
+ * Any durable progress resets this bounded board-local delay. */
+export function atsV2UnproductiveDetailRetryMs(recent: readonly EnrichmentTurn[]): number {
+  let failures = 0;
+  for (const turn of recent) {
+    if (turn.itemsProgressed > 0 || turn.yieldReason !== null && turn.yieldReason !== 'enrichment_budget') break;
+    if (turn.detailRequestCount > 0) failures++;
+  }
+  return failures < 3 ? ATS_V2_CONTINUATION_IDLE_RETRY_MS
+    : [5, 15, 30, 60][Math.min(3, failures - 3)] * 60_000;
+}
+
+/** Empty detail turns wait for retained item retries, provider cooldowns and
+ * repeated unsuccessful detail turns. This never terminalizes pending work. */
 export async function atsV2IdleEnrichmentRetryAt(
-  claim: Pick<AtsLedgerClaim, 'batchId' | 'listingGeneration' | 'platform'>,
+  claim: Pick<AtsLedgerClaim, 'batchId' | 'listingGeneration' | 'platform' | 'workReceiptId'>,
   now = new Date(),
-  client: Pick<Prisma.TransactionClient, 'atsIngestionItem' | 'providerCircuit'> = prisma,
+  client: Pick<Prisma.TransactionClient, 'atsIngestionItem' | 'providerCircuit' | 'atsAcquisitionWorkReceipt'> = prisma,
 ): Promise<Date> {
-  const [item, circuit] = await Promise.all([
+  const [item, circuit, recent] = await Promise.all([
     client.atsIngestionItem.findFirst({
       where: { batchId: claim.batchId, ledgerGeneration: claim.listingGeneration,
         enrichmentStatus: 'pending' },
@@ -854,9 +870,17 @@ export async function atsV2IdleEnrichmentRetryAt(
       where: { provider: `ATS-${claim.platform}` },
       select: { state: true, openUntil: true },
     }),
+    client.atsAcquisitionWorkReceipt.findMany({
+      where: { batchId: claim.batchId, startGeneration: claim.listingGeneration, workType: 'enrichment',
+        OR: [{ id: claim.workReceiptId }, { finishedAt: { not: null } }] },
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+      take: 8,
+      select: { itemsProgressed: true, detailRequestCount: true, yieldReason: true },
+    }),
   ]);
   return new Date(Math.max(
-    now.getTime() + ATS_V2_CONTINUATION_IDLE_RETRY_MS,
+    now.getTime() + (item?.enrichmentReason === 'network_required'
+      ? atsV2UnproductiveDetailRetryMs(recent) : ATS_V2_CONTINUATION_IDLE_RETRY_MS),
     item?.nextDetailAt?.getTime() || 0,
     item?.enrichmentReason === 'network_required' && circuit?.state === 'open'
       ? circuit.openUntil?.getTime() || 0 : 0,

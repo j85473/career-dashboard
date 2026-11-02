@@ -169,6 +169,28 @@ test('HTTP refusal, challenge, foreign redirect and overlarge responses retain b
     }
 });
 
+test('a missing exact iCIMS board stops after HTTP instead of spending a browser visit on its 404', async () => {
+    const start = icims + '&ss=1';
+    for (const status of [404, 410]) {
+        const fake = httpFake({ [start]: { status, html: 'Gone' } });
+        await assert.rejects(new BrowserAtsHttpReader(async () => {}, fake.fetcher).page('icims', icims, 1),
+            new RegExp('Board returned HTTP ' + status));
+        assert.equal(fake.calls.length, 1);
+    }
+});
+
+test('iCIMS access errors, foreign missing pages and missing individual jobs keep their fallback', async () => {
+    const start = icims + '&ss=1';
+    for (const reply of [{ status: 403, html: 'Forbidden' }, { status: 429, html: 'Slow down' },
+        { status: 503, html: 'Try again' }, { status: 404, html: 'Gone', url: 'https://other.example/404' },
+        { status: 404, html: 'Gone', url: start + '&searchKeyword=sales' }])
+        assert.equal(await new BrowserAtsHttpReader(async () => {}, httpFake({ [start]: reply }).fetcher).page('icims', icims, 1), null);
+    const link = browserPostingLink('icims', icims, 'https://careers-example.icims.com/jobs/42/account-manager/job')!;
+    const target = link.url + '?in_iframe=1';
+    assert.equal(await new BrowserAtsHttpReader(async () => {}, httpFake({ [target]: { status: 404, html: 'Gone' } }).fetcher)
+        .detail('icims', icims, link), null);
+});
+
 test('operator safety checks propagate instead of being converted into an HTTP fallback', async () => {
     const reader = new BrowserAtsHttpReader(async () => { throw Error('Collection paused'); });
     await assert.rejects(reader.page('paylocity', paylocity, 1), /Collection paused/);

@@ -9,7 +9,8 @@ import { browserAtsTaskDefinition } from './ingestionTaskCatalog';
 import { claimDueIngestionTask, checkpointIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from './ingestionControl';
 import { countExternalIngestionOutcome, emptyExternalIngestionCounters, externalJobAlreadyObserved, ingestExternalJob, persistExternalIngestionSourceRun } from './jobIngestion';
 import { publicCrawlCapacity } from './publicCrawlCapacity';
-import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
+import { BrowserAtsReader } from './browserAtsReader';
+import { AdpPublicReader } from './adpPublicReader';
 import { BrowserPostingEvidenceError, browserPostingSourceId, type BrowserPostingLink } from './browserAtsPosting';
 import { BrowserAtsHttpReader } from './browserAtsHttp';
 import { previewBrowserAtsListingTitle } from './browserAtsListingFilter';
@@ -124,6 +125,7 @@ export async function runBrowserAtsWorker(options: {
                 lastSafetyCheck = Date.now();
             };
             let reader: BrowserAtsReader | undefined;
+            let adpReader: AdpPublicReader | undefined;
             const httpReader = new BrowserAtsHttpReader(check);
             let transportReader: PublicCrawlReader;
             const getReader = async () => {
@@ -158,7 +160,8 @@ export async function runBrowserAtsWorker(options: {
                 progress = previous && saved?.status !== 'succeeded' ? previous : { ...newBrowserSweep(board.slug), ...(previous?.lastProductiveAt ? { lastProductiveAt: previous.lastProductiveAt } : {}) };
                 transportReader = new PublicCrawlReader({ platform, board: board.slug, progress: () => progress!,
                     browserAllowed: options.browserAllowed !== false, http: httpReader, browser: getReader, cost,
-                    adp: { listing: adpListing, detail: adpDetail } });
+                    adp: { listing: (board, page) => (adpReader ||= new AdpPublicReader(board, check)).listing(page),
+                        detail: (board, link) => (adpReader ||= new AdpPublicReader(board, check)).detail(link) } });
                 progress = retryBrowserSweepDetails(progress);
                 if (platform === 'taleo') initialProgress = structuredClone(progress);
                 await saveProgress(claim, platform, board.slug, progress, 'running');

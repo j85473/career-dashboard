@@ -1,5 +1,5 @@
 import { icimsListingUrl, icimsPublicListing } from './icimsPublicListing';
-import { assertPublicBoardAvailable } from './publicBoardAvailability';
+import { assertPublicBoardAvailable, PublicBoardUnavailableError } from './publicBoardAvailability';
 import { PaycomPublicHttp } from './paycomPublicHttp';
 import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
@@ -52,16 +52,24 @@ export class BrowserAtsHttpReader {
         this.brassring = new BrassringHttpDetailReader(check, fetcher);
     }
 
-    private async document(url: string): Promise<{ url: string; html: string; text: string } | null> {
+    private async document(url: string, missingBoardMatches?: (landed: string) => boolean): Promise<{ url: string; html: string; text: string } | null> {
         await this.check();
         try {
             const response = await this.fetcher(url, { signal: AbortSignal.timeout(10_000), headers: { Accept: 'text/html' } });
-            if (!response.ok) { await response.body?.cancel(); return null; }
+            if (!response.ok) {
+                await response.body?.cancel();
+                if ([404, 410].includes(response.status) && missingBoardMatches?.(response.url || url))
+                    throw new PublicBoardUnavailableError('Board returned HTTP ' + response.status);
+                return null;
+            }
             const html = await readBoundedAtsBody(response, 5 * 1024 * 1024);
             if (!html || /(?:just a moment\.\.\.|verify you are human|challenge-platform|cf-chl-)/i.test(html)) return null;
             const $ = cheerio.load(html);
             return { url: response.url || url, html, text: $('body').text() };
-        } catch { return null; }
+        } catch (error) {
+            if (error instanceof PublicBoardUnavailableError) throw error;
+            return null;
+        }
     }
 
     private async paylocityCatalogue(board: string): Promise<PaylocityCatalogue | null> {
@@ -124,7 +132,9 @@ export class BrowserAtsHttpReader {
         // A same-host filtered search cannot silently become a full-board sweep.
         if (!url) return null;
         if (page === 1) url.searchParams.set('ss', '1');
-        const doc = await this.document(url.href);
+        // A missing exact board already has a retry policy. Reopening it in a
+        // browser only spends the shared browser slot on the same missing page.
+        const doc = await this.document(url.href, landed => !!icimsListingUrl(landed, board, page));
         // Apply the same scope guard after redirects; a matching employer host
         // and plausible final-page markup do not prove an unfiltered catalogue.
         if (!doc || !icimsListingUrl(doc.url, board, page)) return null;
