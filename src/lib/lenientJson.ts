@@ -19,10 +19,26 @@
  * keeping visible at the call site rather than normalising away everywhere.
  */
 export function parseJsonWithControlCharacterRecovery(raw: string): unknown {
+  return parseJsonWithRecovery(raw, false);
+}
+
+/**
+ * JSON-LD fallback for raw control characters and trailing object/array commas.
+ * MGA's employer page publishes a complete JobPosting with a trailing address
+ * comma. Only remove commas outside strings after a value and before a closing
+ * delimiter; descriptions, escapes, missing values and other syntax stay intact.
+ * Keep this broader recovery separate from non-JSON-LD provider API readers.
+ */
+export function parseJsonLdWithRecovery(raw: string): unknown {
+  return parseJsonWithRecovery(raw, true);
+}
+
+function parseJsonWithRecovery(raw: string, allowTrailingCommas: boolean): unknown {
   let repaired = '';
   let inString = false;
   let escaped = false;
-  for (const character of raw) {
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index];
     if (escaped) {
       // The character after a backslash is already spoken for, whatever it is.
       repaired += character;
@@ -41,6 +57,16 @@ export function parseJsonWithControlCharacterRecovery(raw: string): unknown {
       repaired += character;
       continue;
     }
+    if (allowTrailingCommas && !inString && character === ',') {
+      let next = index + 1;
+      while (next < raw.length && /[ \t\r\n]/.test(raw[next])) next += 1;
+      if (raw[next] === '}' || raw[next] === ']') {
+        let previous = index - 1;
+        while (previous >= 0 && /[ \t\r\n]/.test(raw[previous])) previous -= 1;
+        // A comma without a preceding value is not a trailing separator.
+        if (previous >= 0 && !/[{\[:,]/.test(raw[previous])) continue;
+      }
+    }
     // Only inside a string literal. The same characters between tokens are the
     // document's own whitespace and must be left exactly as they are.
     if (inString && character === '\n') repaired += '\\n';
@@ -51,7 +77,7 @@ export function parseJsonWithControlCharacterRecovery(raw: string): unknown {
   try {
     return JSON.parse(repaired);
   } catch {
-    // Malformed beyond this one class of defect. Returning null keeps the
+    // Malformed beyond the supported defects. Returning null keeps the
     // caller's existing "could not read it" path rather than inventing a value.
     return null;
   }

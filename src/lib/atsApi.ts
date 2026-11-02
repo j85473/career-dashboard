@@ -11,7 +11,7 @@ import { identifyAts } from '@/lib/atsUtils';
 import { eightfoldBoardSlugFromUrl, eightfoldDetailUrl, eightfoldLocation, eightfoldPostingIdFromUrl, eightfoldPostingPageConfig, eightfoldPostingPageMetadata, eightfoldPostingUrlsMatch } from '@/lib/eightfoldBoard';
 import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
-import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
+import { parseJsonLdWithRecovery, parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
 import { gustoBoardSlugFromUrl, gustoPostingIdFromUrl, parseGustoPostingHtml } from '@/lib/gustoBoard';
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '@/lib/oraclePosting';
 import { parseUkgPostingHtml, ukgPostingIdentity } from '@/lib/ukgPosting';
@@ -745,9 +745,9 @@ export function extractJsonLdJobPosting(html: string, expectedUrl?: string): Jso
     try {
       parsed = JSON.parse(raw);
     } catch {
-      // Teamtailor emits literal newlines inside its description string, which
-      // is invalid JSON. Recover rather than discard the whole posting.
-      parsed = parseJsonWithControlCharacterRecovery(raw);
+      // Recover provider formatting defects: raw newlines in Teamtailor
+      // descriptions and trailing address commas on MGA's employer pages.
+      parsed = parseJsonLdWithRecovery(raw);
       if (parsed === null) continue;
     }
 

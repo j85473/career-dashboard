@@ -5,6 +5,7 @@ import {
   extractJsonLdJobPosting,
   jsonLdCompanyName,
   jsonLdLocationString,
+  parseJsonLdPostingHtml,
 } from '../../src/lib/atsApi';
 import { parseBreezySalaryRange } from '../../src/lib/jobIngestion';
 
@@ -162,4 +163,31 @@ test('lenient recovery never rewrites structure or well-formed documents', () =>
 
   // Genuinely broken JSON still yields nothing rather than a wrong answer.
   assert.equal(extractJsonLdJobPosting('<script type="application/ld+json">{"@type":</script>'), null);
+});
+
+test('MGA trailing address comma recovers complete posting details without a reader fallback', () => {
+  const url = 'https://careers.mgae.com/jobs/director-sales-club-9204160398685_1/';
+  const description = '<h2>Responsibilities</h2><p>Lead club-channel sales strategy, retailer relationships, annual planning, forecasting, negotiations, and program execution. Develop retailer-specific programs and work with product development, finance, supply chain, and customer service to deliver customer commitments. Analyze sales trends, inventory, promotional timing, and account results to identify opportunities and corrective actions.</p><h2>Qualifications</h2><p>Seven years of sales and account management experience. Build customer partnerships, lead business reviews, and coordinate product launches across internal teams. Strong presentation, communication, negotiation, analytical, and organizational skills are required. Experience managing national retail accounts and translating customer needs into product recommendations is preferred.</p>';
+  const raw = `{
+    "@type": "JobPosting", "url": "${url}",
+    "title": "Director, Sales - Club", "description": ${JSON.stringify(description)},
+    "hiringOrganization": {"name": "MGAE Corporation"},
+    "jobLocation": {"@type":"Place","address":{
+      "addressLocality":"Bentonville", "addressRegion":"AR", "addressCountry":"US",
+    }}
+  }`;
+  assert.throws(() => JSON.parse(raw));
+  const html = `<script type="application/ld+json">{"@type":"WebPage"}</script>
+    <script type="application/ld+json">${raw}</script>`;
+  const result = parseJsonLdPostingHtml(html, url);
+  assert.ok(result, 'the direct posting reader must recover the description and metadata');
+  assert.equal(result.title, 'Director, Sales - Club');
+  assert.equal(result.company, 'MGAE Corporation');
+  assert.equal(result.location, 'Bentonville, AR');
+  assert.match(result.text, /Lead club-channel sales strategy/);
+  assert.match(result.text, /Seven years of sales/);
+  assert.equal(extractJsonLdJobPosting(html, url.replace('9204160398685_1', 'other')), null,
+    'syntax recovery must still reject another posting identity');
+  assert.equal(parseJsonLdPostingHtml(html.replace(description, 'Loading...'), url), null,
+    'syntax recovery must not bypass description quality checks');
 });
