@@ -188,7 +188,9 @@ def render_factual_input(
         answer_instructions = [
             "Use yes only when the supplied material explicitly establishes the complete proposition. Use no when the supplied material explicitly establishes that the proposition is false. Use unsupported when the supplied material does not provide enough information to decide.",
             "For every yes, copy one or two exact contiguous passages that establish the complete proposition. For no or unsupported, provide no passage. Only yes carries an evidence burden.",
-            "For the Minneapolis–St. Paul residence question, answer yes when the supplied material requires residence in a named place outside that metro, including a different state. Answer no when the allowed residence area includes the Minneapolis–St. Paul metro. Answer unsupported when residence eligibility is not stated clearly enough to decide.",
+            "For the Minneapolis–St. Paul work-base question, answer yes when the supplied material establishes required residence, commuting, onsite or hybrid attendance, or recurring in-person field work outside that metro that prevents remaining based there. The material need not use the words 'must live'. Required daily account visits or a regular local service route in a named nonlocal market establish this constraint even when residence there is described only as ideal or preferred.",
+            "Connect the required physical duties and their frequency to the named geography. When these appear in separate passages, use one exact passage for the geography and one for the required duties and frequency. A generic 'remote' label does not override those physical requirements.",
+            "A territory name, preferred residence, occasional events, or regional, national, or international business travel alone does not establish an incompatible work base. Answer no when the material explicitly permits remaining Minneapolis–St. Paul-based while performing the duties and travel. Answer unsupported when the required work base or frequency of local presence is not stated clearly enough to decide.",
         ]
     else:
         answer_instructions = [

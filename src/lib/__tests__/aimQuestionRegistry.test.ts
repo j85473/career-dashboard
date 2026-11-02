@@ -10,7 +10,7 @@ import { canonicalJsonSha256 } from '../scoringCanonicalJson';
 
 test('Aim v2 registry is exact, unique, immutable, and hash-bound', () => {
   const loaded = loadAimQuestionRegistry();
-  assert.equal(loaded.questionRegistryHash, '8813d7c352d003953142ede9af7faf31f74d8f56bd4b304db7d299ef8f54d046');
+  assert.equal(loaded.questionRegistryHash, '9848046cbf0c311df8f2346bcd71001e75c071a3f622ec566585a6d658abd485');
   assert.equal(loaded.registry.questions.filter((question) => question.privatePhase === 'stage1').length, 7);
   assert.equal(loaded.registry.questions.filter((question) => question.privatePhase === 'stage2').length, 342);
   assert.equal(new Set(loaded.registry.questions.map((question) => question.id)).size, 349);

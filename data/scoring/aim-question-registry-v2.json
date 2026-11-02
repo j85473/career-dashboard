@@ -62,7 +62,7 @@
     },
     {
       "id": "S1.Q03",
-      "wording": "Does this job require a candidate to live outside of the Minneapolis–St. Paul metro?",
+      "wording": "Does the supplied material require residence, commuting, onsite or hybrid attendance, or recurring in-person field work outside the Minneapolis–St. Paul metro that prevents remaining based in that metro?",
       "privatePhase": "stage1",
       "allowedSources": [
         "original_jd",

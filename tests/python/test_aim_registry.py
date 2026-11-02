@@ -25,9 +25,9 @@ class AimRegistryTests(unittest.TestCase):
 
     def test_exact_counts_hashes_and_stable_private_assignment(self) -> None:
         authorities = self.authorities
-        self.assertEqual(authorities.question_registry_hash, "8813d7c352d003953142ede9af7faf31f74d8f56bd4b304db7d299ef8f54d046")
+        self.assertEqual(authorities.question_registry_hash, "9848046cbf0c311df8f2346bcd71001e75c071a3f622ec566585a6d658abd485")
         self.assertEqual(authorities.scoring_policy_hash, "3af1eaf21fd09a70839a9b9c3eecc27c4a07a04759ad453ede081c38eef850cb")
-        self.assertEqual(authorities.runner_protocol_hash, "8efb68d81c99a3d46dc3b37985a176dfd63dcf3c594fdbc8811762e5ab86fce3")
+        self.assertEqual(authorities.runner_protocol_hash, "d45bddb49028234669b8fa11bed3f703a742e6cacbafa7125b4b7009f3f04ea3")
         self.assertEqual(authorities.packet_strategy_hash, "0723425ac01276ed4374c49fd36b1d28c69971c0e3b6d30aa62bc46113022636")
         packets = stage2_logical_packets(authorities)
         self.assertEqual([len(packet.ordered_questions) for packet in packets], [30, 104, 104, 104])

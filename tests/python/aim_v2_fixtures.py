@@ -17,6 +17,7 @@ def make_aim_v2_export(
     repo_root: Path,
     sources: list[str] | None = None,
     companies: list[str] | None = None,
+    trusted_metadata: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], AimAuthorities]:
     authorities = load_aim_authorities(repo_root)
     sources = sources or ["No relevant facts are stated."]
@@ -49,7 +50,9 @@ def make_aim_v2_export(
     }
     jobs: list[dict[str, Any]] = []
     for ordinal, (source, company) in enumerate(zip(sources, companies)):
-        metadata = {"company": company, "title": "Channel Manager", "location": "Minneapolis, MN"}
+        metadata = trusted_metadata[ordinal] if trusted_metadata is not None else {
+            "company": company, "title": "Channel Manager", "location": "Minneapolis, MN",
+        }
         source_hash = source_jd_hash(source)
         metadata_hash = trusted_metadata_hash(metadata)
         source_id = source_identity(source_hash, metadata_hash)

@@ -108,7 +108,8 @@ export function evaluateAimStage1(
   const triggers = new Set<string>();
   for (const questionId of stage1Policy.unconditionalYesKills) if (isYes(vector, questionId)) triggers.add(questionId);
 
-  // S1.Q03 asks the complete MSP-residence proposition directly. A validated
+  // S1.Q03 asks the complete MSP work-base proposition, including required
+  // recurring in-person field work outside the metro. A validated
   // yes dismisses; no and unsupported continue. Do not reinterpret the answer
   // through a second generic location parser.
   const locationState: RequiredWorkBaseCompatibility | null = isYes(vector, 'S1.Q03') ? 'incompatible' : null;

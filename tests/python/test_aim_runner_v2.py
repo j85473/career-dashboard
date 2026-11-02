@@ -180,6 +180,84 @@ class AimRunnerV2Tests(unittest.TestCase):
         self.assertEqual(result["results"][0]["result"]["variant"], "factual_screen_kill")
         self.assertNotIn("compensation", result["results"][0]["result"])
 
+    def test_work_base_answers_route_daily_field_work_and_preserve_travel_survivors(self) -> None:
+        # These are supplied worker answers, not a simulated language model.
+        # Verify the actual prompt, exact evidence acceptance, and routing.
+        cases = [
+            (
+                "connecticut-daily-visits",
+                "Territory: Connecticut\nThe ideal candidate would live in the New Haven area.\n"
+                "Visit a minimum of ten accounts a day.",
+                "Fully Remote; CT",
+                "yes",
+                ["Territory: Connecticut", "Visit a minimum of ten accounts a day."],
+            ),
+            (
+                "nonlocal-service-route",
+                "Territory: Hartford, Connecticut\nTechnicians must service local customer sites every weekday.",
+                "Remote",
+                "yes",
+                ["Territory: Hartford, Connecticut", "Technicians must service local customer sites every weekday."],
+            ),
+            (
+                "minneapolis-with-national-travel",
+                "You may remain based in Minneapolis and travel nationally to customers up to 40% of the time.",
+                "Remote, US",
+                "no",
+                [],
+            ),
+            (
+                "territory-without-presence-requirement",
+                "Territory: Connecticut. Travel to customer events as needed.",
+                "Remote",
+                "unsupported",
+                [],
+            ),
+            (
+                "preferred-residence-only",
+                "The ideal candidate would live in the New Haven area.",
+                "Remote",
+                "unsupported",
+                [],
+            ),
+        ]
+        for name, source, location, answer, excerpts in cases:
+            with self.subTest(case=name):
+                exported, _ = make_aim_v2_export(REPO_ROOT, sources=[source], trusted_metadata=[{
+                    "company": "Example", "title": "Field Account Manager", "location": location,
+                }])
+
+                def worker(**kwargs: object) -> WorkerRun:
+                    if kwargs["effort"] == "high":
+                        self.assertNotEqual(answer, "yes", "incompatible field work must stop before Stage 2")
+                        return self.unsupported_worker(**kwargs)
+                    prompt = str(kwargs["prompt"])
+                    self.assertIn("recurring in-person field work", prompt)
+                    self.assertIn("The material need not use the words 'must live'", prompt)
+                    self.assertIn("one exact passage for the geography and one for the required duties and frequency", prompt)
+                    self.assertIn("A generic 'remote' label does not override those physical requirements", prompt)
+                    self.assertIn("A territory name, preferred residence, occasional events", prompt)
+                    lines = [line for line in prompt.splitlines() if re.match(r"^\d+\. ", line)]
+                    answers = []
+                    for number, line in enumerate(lines, start=1):
+                        selected = "prevents remaining based in that metro" in line
+                        answers.append(f"{number}. {answer if selected else 'unsupported'}")
+                        if selected:
+                            answers.extend(f'Evidence: "{quote}"' for quote in excerpts)
+                    output = "\n".join(answers)
+                    return WorkerRun(output, worker_receipt(str(kwargs["effort"])), raw_output=output)
+
+                result, counts, prompts = self.run_export(exported, worker)
+                item = result["results"][0]["result"]
+                self.assertEqual(counts["safeFailures"], 0)
+                self.assertEqual(item["variant"], "factual_screen_kill" if answer == "yes" else "scored_survivor")
+                self.assertEqual(len(prompts), 1 if answer == "yes" else 2)
+                vector = item["factualVector"]
+                location_answer = next(entry for entry in vector["answers"] if entry["questionId"] == "S1.Q03")
+                self.assertEqual(location_answer["answer"], answer)
+                self.assertEqual(len(location_answer["evidenceIds"]), len(excerpts))
+                self.assertTrue(all(entry["exactQuote"] in source for entry in vector["evidenceCatalog"]))
+
     def test_stage2_scores_without_a_separate_compensation_packet(self) -> None:
         source = "Maximum annual total cash compensation is USD 59,999."
         exported, _ = make_aim_v2_export(REPO_ROOT, sources=[source])
