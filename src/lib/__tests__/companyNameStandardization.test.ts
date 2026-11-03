@@ -144,7 +144,7 @@ test('generic Company imports stay unresolved without verified identity and cann
 });
 
 test('placeholder variants cannot become correction rules or their destinations', async () => {
-  for (const priorName of ['Unknown', 'Unknown Company', 'Unknown Employer', 'N/A', 'Not specified', 'Not available', 'Manual Import', 'Company', 'Company logo', 'Employer', 'Organization']) {
+  for (const priorName of ['Unknown', 'Unknown Company', 'Unknown Employer', 'N/A', 'Not specified', 'Not available', 'UNAVAILABLE', 'Manual Import', 'Company', 'Company logo', 'Employer', 'Organization']) {
     const { store, rules } = ruleStore();
     await recordCompanyNameCorrection(store, { priorName, standardName: 'Apple', jobId: 'apple' });
     assert.equal(rules.size, 3, priorName);

@@ -176,6 +176,17 @@ export function phenomPublishedJob(html: string, id: string): Record<string, unk
     return null;
 }
 const validCompany = (v: string) => !isPlaceholderEmployerName(v) && v.length > 1 && v.length < 200 && /[a-z]/i.test(v) && !/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9-]{27})$/i.test(v) && !/^(?:unknown(?: company)?|not specified|not provided|confidential|company name|company logo|header logo|logo|careers?|job(?:s| description)?|ADP|Paycom|Paylocity|Sage HR|Jobvite|CATS|iCIMS|Avature|BrassRing|Talemetry)$/i.test(v);
+/** iCIMS can publish UNAVAILABLE even when its Overview names the employer.
+ * Only use the opening self-introduction, never a later customer/brand mention. */
+function icimsOverviewCompany(description: string): string | null {
+    const introduction = /^Overview\s*\n+([^\n]+)/i.exec(description)?.[1]?.trim();
+    const name = introduction && /^([A-Z][^.!?\n]{1,149}?)\s+is\s+(?:a|an|the)\s+/u.exec(introduction)?.[1]?.trim();
+    if (!name || !validCompany(name)
+        || /\b(?:client|customer|partner|brand)\b/i.test(name)
+        || /^(?:our|your|their|the|this|we|it)\b/i.test(name)
+        || /\bis\s+(?:a|an|the)\s+(?:client|customer)\b/i.test(introduction!)) return null;
+    return name;
+}
 function taleoPublishedCompany(html: string, url: string): string | null {
     const $ = cheerio.load(html);
     const names = new Set<string>();
@@ -247,11 +258,6 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         if (platform === 'cats' && !company) company = $('header #logo img[alt],header img.logo-image[alt]').first().attr('alt')?.trim() || null;
         if (platform === 'taleo' && !company) company = taleoPublishedCompany(doc.html, doc.url);
         if (platform === 'dzconnex' && !company) company = /©\s*\d{4}\s+(.{2,100}?)\.?\s+All Rights Reserved/i.exec(doc.text)?.[1]?.trim() || null;
-        if (platform === 'icims' && !company) {
-            const m = /at (.+?)(?:\||$)/.exec($('head title').first().text());
-            if (m)
-                company = m[1].trim();
-        }
         if (platform === 'sagehr' && !company) {
             const named = metaTitle.endsWith(' - ' + title) ? metaTitle.slice(0, -(' - ' + title).length).trim() : '';
             const other = /Other jobs at (.+)/.exec($('.other-jobs h2').text())?.[1]?.trim();
@@ -292,6 +298,15 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         }
         if (platform === 'talemetry' && !company)
             company = talemetryPublishedEmployer(doc.html, doc.url, description) || null;
+        if (platform === 'icims' && !company) {
+            company = icimsOverviewCompany(description);
+            // "Careers at" often names a department or office rather than an
+            // employer. Only a title attached directly to "at" supplies one.
+            const pageTitle = $('head title').first().text();
+            const prefix = title + ' at ';
+            if (!company && pageTitle.startsWith(prefix))
+                company = pageTitle.slice(prefix.length).split('|')[0].trim() || null;
+        }
         if (!company) {
             const selectors: Partial<Record<BrowserAtsPlatform, string>> = { avature: '.field--company .field__value,[data-field="company"]', dzconnex: '.job-company,.company-name', cats: '.company-name' };
             if (selectors[platform])
