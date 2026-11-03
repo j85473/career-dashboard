@@ -9,7 +9,7 @@ import { recruiteePostingLocation } from './recruiteeLocation';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { dayforcePostingIdentity, isDayforcePostingHost, resolveDayforceObservation } from './dayforcePostingIdentity';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
-import { recoverPublishedAtsBoardEmployer } from './atsEmployerRecovery';
+import { recoverPublishedAtsBoardEmployer, recoverPublishedAtsPostingEvidence } from './atsEmployerRecovery';
 import { isPublicAtsPlatform, buildPublicAtsBoardRequest } from './publicAtsBoards';
 import { eightfoldSearchUrl, eightfoldPostingUrl, eightfoldLocation } from './eightfoldBoard';
 import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
@@ -6163,7 +6163,7 @@ export async function ingestJobs(
                 rawDescription += `\n\n${job.additionalPlain}`;
               }
             }
-            const cleanDescription = cleanHtmlText(rawDescription);
+            let cleanDescription = cleanHtmlText(rawDescription);
 
             const sourceId = atsListingSourceId(board.platform, job);
 
@@ -6195,11 +6195,18 @@ export async function ingestJobs(
             // Parse platform specifics
             if (isPublicAtsPlatform(board.platform)) {
               company = eightfoldMarker?.company || atsEnrichmentMarker?.company || job.company || '';
+              let recoveredPostingLocation: string | null = null;
               if (['oracle', 'ukg', 'zohorecruit'].includes(board.platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
                 company = await verifiedAtsBoardEmployer(board.platform, board.slug)
                   || await recoverPublishedAtsBoardEmployer(board.platform, board.slug);
+                if (!company) {
+                  const recovered = await recoverPublishedAtsPostingEvidence(board.platform, board.slug, job);
+                  company = recovered?.company || '';
+                  if (!cleanDescription && recovered?.description) cleanDescription = cleanHtmlText(recovered.description);
+                  recoveredPostingLocation = recovered?.location || null;
+                }
               }
-              locationStr = eightfoldMarker?.location || atsEnrichmentMarker?.location || locationText || 'Unknown Location';
+              locationStr = eightfoldMarker?.location || atsEnrichmentMarker?.location || recoveredPostingLocation || locationText || 'Unknown Location';
               url = job.url || '';
               if (board.platform === 'successfactors' && (!publishedEmployerName(company)
                 || /^(?:unknown(?: location)?|n\/a|not specified)$/i.test(locationStr))) {

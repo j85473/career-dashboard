@@ -64,7 +64,7 @@ function ukgLocation(value: unknown): string | undefined {
 /** UKG's posting-title translation publishes the board's name even when its
  * logo is only "Default Brand". Bind the inert JSON to the exact role already
  * verified by CandidateOpportunityDetail; generic search labels are not names. */
-function postingBoardEmployer($: cheerio.CheerioAPI, title: string): string {
+function postingBoardEmployer($: cheerio.CheerioAPI, title: string, description: string): string {
   const matches = $('script').toArray().flatMap(script => [...($(script).html() || '').matchAll(
     /\bvar\s+params\s*=\s*(\{[^;]*\})\s*;\s*var\s+alias\s*=\s*["']OpportunityDetail\.Index\.PageTitle["']\s*;/g,
   )]);
@@ -72,7 +72,16 @@ function postingBoardEmployer($: cheerio.CheerioAPI, title: string): string {
   try {
     const params = JSON.parse(matches[0][1]);
     if (params.opportunityTitle !== title) return '';
-    const name = publishedEmployerName(params.jobBoardName);
+    const rawName = postingMetadataValue(params.jobBoardName) || '';
+    const employer = rawName.replace(/(?:\s+[-–—]\s*)?\s+(?:(?:open\s+)?(?:job\s+)?opportunities|job\s+board)\s*$/i, '').trim();
+    // A decorated board name also needs this exact posting's own hiring
+    // statement. "Sales Opportunities" or a client mention is not an employer.
+    if (employer !== rawName && publishedEmployerName(employer)) {
+      const escaped = employer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const selfIdentification = new RegExp(`(?:\\b(?:join|at|about) ${escaped}(?:[,.:]|\\s+(?:we|a |is |are ))|\\b(?:policy of ${escaped} to|${escaped} is (?:hiring|seeking|looking)))`, 'i');
+      if (selfIdentification.test(description.replace(/\s+/g, ' '))) return publishedEmployerName(employer);
+    }
+    const name = publishedEmployerName(rawName);
     return /\b(?:opportunit(?:y|ies)|job\s*board|recruit(?:ing|ment)|external|internal|open\s+positions|candidate|portal)\b/i.test(name)
       ? '' : name;
   } catch { return ''; }
@@ -88,8 +97,8 @@ export function parseUkgPostingHtml(html: string, url: string): AtsScrapeResult 
   const title = postingMetadataValue(opportunity?.Title);
   if (!opportunity || !title) return null;
   const branding = ukgBoardBranding(html, url);
-  const boardCompany = branding.company || postingBoardEmployer($, title);
   const description = typeof opportunity.Description === 'string' ? cleanHtmlText(opportunity.Description) : '';
+  const boardCompany = branding.company || postingBoardEmployer($, title, description);
   // A first-person introduction needs independent employer corroboration.
   // Mere parent/client mentions elsewhere in the JD never supply the employer.
   const introduction = description.replace(/\s+/g, ' ').trim();

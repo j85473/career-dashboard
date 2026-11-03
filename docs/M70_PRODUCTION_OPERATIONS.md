@@ -110,6 +110,25 @@ the ordinary validator and its size, pacing, pilot and capacity limits.
 Downloaded work awaiting employer evidence remains held and visible. This
 repair does not count incomplete collection as successful coverage.
 
+### Employer evidence on retained Oracle and UKG work (November 3, 2026)
+
+When a saved Oracle or UKG item still has no verified employer after board
+recovery, persistence can recheck its exact posting. The saved posting ID,
+board identity and title must match. Oracle may follow a same-tenant site alias
+only while retaining that exact requisition, then verifies the detail API and
+the destination site's published employer evidence. UKG host migrations must
+retain the same tenant, board and opportunity; its inert posting data supplies
+the exact role. Decorated UKG board names such as “Five Guys Opportunities”
+also require corroborating hiring language in that same posting.
+
+Recovered descriptions fill an empty description on the consumer's local
+copy, and recovered locations remain available to normalization. Saved raw
+items, terminal enrichment markers, manifests, checkpoints and retry dates are
+not rewritten. Recovery shares provider controls, uses a fifteen-second
+request deadline and a bounded five-minute posting cache, and never guesses
+from tenant IDs. Missing or conflicting evidence retains the existing hold.
+Installing the change does not release holds in bulk or edit existing scores.
+
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 
 ### Reconciling the four-day API rotation

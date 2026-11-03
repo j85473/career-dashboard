@@ -128,3 +128,18 @@ test('UKG generic careers branding requires matching introduction and exact oppo
   assert.equal(parseUkgPostingHtml(page({ ...data, Id: '24ce5fe4-5d06-404d-8583-07a8c01f5bdf' }, branding), url), null);
   assert.equal(parseUkgPostingHtml(page(opportunity, branding), url)?.company, undefined);
 });
+
+test('UKG decorated employer board names require independent exact-posting hiring language', () => {
+  const named = (name: string) => `<script>var params = ${JSON.stringify({ opportunityTitle: opportunity.Title, jobBoardName: name })};
+    var alias = "OpportunityDetail.Index.PageTitle";</script>`;
+  for (const [name, description, expected] of [
+    ['Five Guys Opportunities', 'It is the policy of Five Guys to provide equal employment opportunity.', 'Five Guys'],
+    ['Ecumen Job Board', 'Join Ecumen, a leading nonprofit senior living provider.', 'Ecumen'],
+    ['Tate - Open Job Opportunities', 'At Tate, we build solutions.', 'Tate'],
+    ['Sales Opportunities', 'Manage regional sales.', undefined],
+    ['Other Employer Opportunities', 'Our client is Other Employer.', undefined],
+    ['External Opportunities', 'Join our team.', undefined],
+  ] as const) {
+    assert.equal(parseUkgPostingHtml(page({ ...opportunity, Description: description }, '') + named(name), url)?.company, expected);
+  }
+});
