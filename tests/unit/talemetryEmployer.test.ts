@@ -31,12 +31,14 @@ test('the affected Syneos posting recovers its employer from both failing extrac
   assert.equal(posting(undefined, '<header><img alt="Company logo"></header>')?.company, 'Syneos Health');
 });
 
-test('an unreviewed Talemetry board needs real branding after generic structured metadata is rejected', () => {
+test('an unreviewed Talemetry board retains unnamed postings and needs real branding to supply a name', () => {
   const other = url.replace('syneoshealthcareers', 'unrelated');
-  assert.equal(posting('Company', '<header><img alt="Company logo"></header>', other), null);
+  const unresolved = posting('Company', '<header><img alt="Company logo"></header>', other);
+  assert.equal(unresolved?.company, 'Unknown Company');
+  assert.equal(unresolved?.description, description.trim());
   assert.equal(posting('Company', '<meta property="og:site_name" content="Example Inc">', other)?.company, 'Example Inc');
   assert.equal(posting(undefined, '<header><img alt="Company logo"><img alt="Example Inc logo"></header>', other)?.company, 'Example Inc');
-  assert.equal(posting(undefined, '<main><img alt="Unrelated sponsor logo"></main>', other), null);
+  assert.equal(posting(undefined, '<main><img alt="Unrelated sponsor logo"></main>', other)?.company, 'Unknown Company');
 });
 
 test('recovery keeps explicit agency and subsidiary self-identification rather than flattening the board', () => {

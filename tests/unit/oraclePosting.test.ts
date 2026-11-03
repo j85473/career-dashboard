@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '../../src/lib/oraclePosting';
-import { evaluateAuthoritativeMetadata } from '../../src/lib/authoritativeMetadataGate';
+import { evaluateAuthoritativeGeography, evaluateAuthoritativeMetadata } from '../../src/lib/authoritativeMetadataGate';
 import { localTriageVerdict } from '../../src/lib/localTriage';
 
 const URL = 'https://ehtl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/19195/';
@@ -99,7 +99,10 @@ for (const [id, city] of [
     const metadata = { title: result?.title, company: result?.company, location: result?.location, url };
     const gate = evaluateAuthoritativeMetadata(metadata);
     assert.equal(gate.passes, false);
-    assert.match(gate.reason, /outside the searched geographies/i);
+    assert.match(gate.reason, /AutoZone Parts Sales Manager/i);
+    const geography = evaluateAuthoritativeGeography(metadata);
+    assert.equal(geography.passes, false);
+    assert.match(geography.reason, /outside the searched geographies/i);
     assert.equal(localTriageVerdict({ ...metadata, capRationale: '' }).pass, false);
   });
 }

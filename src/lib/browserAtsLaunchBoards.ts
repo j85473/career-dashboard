@@ -3,6 +3,7 @@ export const BROWSER_ATS_LAUNCH_BOARDS: Array<[
     BrowserAtsPlatform,
     string
 ]> = [
+    ['paycor', 'https://recruitingbypaycor.com/career/CareerHome.action?clientId=8a7883d08a24e305018a3e033608093d'],
     ['adp', 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=87997030-820d-4515-bec9-cf549d124af7&ccId=19000101_000001'],
     ['adp', 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=87b90c88-c86a-4cbe-bbee-3a1ea9a703ec&ccId=19000101_000001'],
     ['avature', 'https://maximus.avature.net/careers/SearchJobs'], ['avature', 'https://koch.avature.net/en_US/careers/SearchJobs'],

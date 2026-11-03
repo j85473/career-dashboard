@@ -134,7 +134,9 @@ test('Paylocity published branding and description containers work without JSON-
   const link=browserPostingLink('paylocity',board,'https://recruiting.paylocity.com/Recruiting/Jobs/Details/4577952','Account Manager')!;
   const doc={url:link.url,html:`<header><h2 id="LayoutLogoName">Example Foods LLC</h2></header><div class="job-preview-details">${description}</div>`,text:description};
   assert.equal(parseBrowserPosting('paylocity',board,link,[doc])?.company,'Example Foods LLC');
-  assert.equal(parseBrowserPosting('paylocity',board,link,[{...doc,html:doc.html.replace('Example Foods LLC','Company Logo')}]),null);
+  const unresolved=parseBrowserPosting('paylocity',board,link,[{...doc,html:doc.html.replace('Example Foods LLC','Company Logo')}]);
+  assert.equal(unresolved?.company,'Unknown Company');
+  assert.equal(unresolved?.description,description.trim());
 });
 test('Phenom public job data must match the requisition and retains every location without evaluating scripts', () => {
   const job={jobRequisitionId:'R42',companyName:'Example Inc',title:'Account Manager',description,multi_location:[{address:'Minneapolis, MN, US'},{address:'Chicago, IL, US'}]};

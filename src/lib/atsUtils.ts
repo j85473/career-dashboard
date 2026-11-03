@@ -7,7 +7,7 @@ import { isZohoRecruitHost } from './zohoRecruitHost';
 export const ATS_OPTIONS = [
   'Symphony Talent', 'Jobvite', 'Freshteam', 'CATS', 'Kula',
   'Gem', 'JobScore', 'JazzHR', 'Manatal', 'ClearCompany', 'HireHive', 'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Eightfold', 'Greenhouse',
-  'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
+  'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycor', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
   'UKG', 'Umantis', 'Unknown', 'Workable', 'Workday', 'Zoho Recruit', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
@@ -74,6 +74,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('sage.hr')) return 'Sage HR';
   if (hasHost('brassring.com')) return 'BrassRing';
   if (hasHost('ultipro.com', 'ukg.com', 'ukg.net', 'saashr.com')) return 'UKG';
+  if (['recruitingbypaycor.com', 'newton.newtonsoftware.com'].includes(host)) return 'Paycor';
   if (hasHost('paylocity.com')) return 'Paylocity';
   if (hasHost('paycomonline.net')) return 'Paycom';
   if (hasHost('avature.net', 'apply.deloitte.com')) return 'Avature';

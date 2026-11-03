@@ -1,3 +1,4 @@
+import { paycorPostingLink, parsePaycorPosting } from './paycorPublic';
 import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
@@ -33,6 +34,9 @@ export class BrowserPostingEvidenceError extends Error {
     constructor(message: string, readonly counted = false) { super(message); }
 }
 export function browserPostingLink(platform: BrowserAtsPlatform, board: string, value: string, title = ''): BrowserPostingLink | null {
+    if (platform === 'paycor') {
+        try { return paycorPostingLink(board, new URL(value, board).href, title); } catch { return null; }
+    }
     try {
         const u = new URL(value, board), b = new URL(board);
         if (u.protocol !== 'https:' || u.username || u.password || u.port || u.hostname !== b.hostname)
@@ -214,6 +218,7 @@ function taleoPublishedCompany(html: string, url: string): string | null {
 }
 /** Published page evidence only. Missing employer or location is never inferred from tenant tokens. */
 export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink, docs: BrowserDocument[]): BrowserPosting | null {
+    if (platform === 'paycor') return parsePaycorPosting(board, link, docs);
     let unresolved: BrowserPosting | null = null;
     for (const doc of docs) {
         const current = browserPostingLink(platform, board, doc.url);

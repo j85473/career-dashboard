@@ -813,6 +813,13 @@ async function verifyAndComplete(runId: string): Promise<void> {
   console.log(`[Audit] ${status}: ${receipts}/${expectedReceipts} index receipts; every queued candidate was classified or catalogued for controlled admission; unresolved=${unresolved}.`);
 }
 
+/** Finish an in-flight index first, then harvest recent job URLs before history. */
+export function localAuditIndexOrder(indices: readonly string[], running: readonly string[]): string[] {
+  const active = [...new Set(running)];
+  if (active.some(index => !indices.includes(index))) throw Error('Saved local scan is outside its audit index scope');
+  return [...active, ...[...indices].reverse().filter(index => !active.includes(index))];
+}
+
 export async function runFullAudit(): Promise<void> {
   if (!Number.isFinite(COMMON_CRAWL_DELAY_MS) || COMMON_CRAWL_DELAY_MS < 5000) {
     throw new Error('ATS_DISCOVERY_CC_DELAY_MS must be at least 5000ms to respect Common Crawl rate guidance.');
@@ -830,7 +837,9 @@ export async function runFullAudit(): Promise<void> {
       await prepareLocalCrawlWorkspace(config);
       // Finish every required pattern in a crawl before moving to another.
       // Old source offsets/query IDs stay untouched; local scans own a new cursor.
-      for (const indexId of indices) {
+      const running = await prisma.atsDiscoveryLocalScan.findMany({ where: { runId: run.id, status: 'running' },
+        orderBy: { createdAt: 'asc' }, select: { indexId: true } });
+      for (const indexId of localAuditIndexOrder(indices, running.map(scan => scan.indexId))) {
         await scanLocalCrawl(prisma, run.id, indexId,
           workItems.map(({ platformKey, pattern }) => ({ platform: platformKey, pattern })), config,
           () => processReadyCandidates(run.id));

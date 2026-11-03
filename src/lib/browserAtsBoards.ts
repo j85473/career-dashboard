@@ -1,7 +1,8 @@
+import { PAYCOR_HOSTS, paycorIdentity, paycorBoardUrl } from './paycorIdentity';
 /** Board identities for the serial public-career-site collector. No network or database dependencies. */
 export const BROWSER_ATS_LABELS = {
     adp: 'ADP', avature: 'Avature', brassring: 'BrassRing', dzconnex: 'DZConneX', icims: 'iCIMS',
-    paycom: 'Paycom', paylocity: 'Paylocity', phenom: 'Phenom', sagehr: 'Sage HR',
+    paycor: 'Paycor', paycom: 'Paycom', paylocity: 'Paylocity', phenom: 'Phenom', sagehr: 'Sage HR',
     talemetry: 'Talemetry', taleo: 'Taleo', jobvite: 'Jobvite', freshteam: 'Freshteam', cats: 'CATS',
 } as const;
 export type BrowserAtsPlatform = keyof typeof BROWSER_ATS_LABELS;
@@ -10,7 +11,7 @@ export const BROWSER_ATS_PLATFORMS = Object.keys(BROWSER_ATS_LABELS) as BrowserA
 // use the same durable board/task identities without occupying the browser seat.
 export const PUBLIC_ATS_HTTP_PLATFORMS: readonly BrowserAtsPlatform[] = ['adp'];
 /** These providers can hand an exact saved sweep to the browser when HTTP is insufficient. */
-export const PUBLIC_ATS_HTTP_FIRST_PLATFORMS: readonly BrowserAtsPlatform[] = ['paylocity', 'icims', 'paycom'];
+export const PUBLIC_ATS_HTTP_FIRST_PLATFORMS: readonly BrowserAtsPlatform[] = ['paylocity', 'icims', 'paycom', 'paycor'];
 export function publicAtsWorkerPlatforms(httpOnly = false): BrowserAtsPlatform[] {
     return BROWSER_ATS_PLATFORMS.filter(platform => httpOnly
         ? PUBLIC_ATS_HTTP_PLATFORMS.includes(platform) || PUBLIC_ATS_HTTP_FIRST_PLATFORMS.includes(platform)
@@ -25,6 +26,7 @@ const tenant = (host: string, suffix: string) => host.endsWith('.' + suffix)
 // public employer page establishes another host's publishing technology.
 export const PHENOM_BOARD_HOSTS = ['jobs.thecignagroup.com', 'careers.arrow.com'];
 export const BROWSER_ATS_PATTERNS: Record<BrowserAtsPlatform, string[]> = {
+    paycor: PAYCOR_HOSTS.map(host => host + '/career/*'),
     adp: ['workforcenow.adp.com/mascsr/default/mdf/recruitment/*'],
     avature: ['*.avature.net/*', 'apply.deloitte.com/*'],
     brassring: ['sjobs.brassring.com/TGnewUI/*'], dzconnex: ['*.dzconnex.com/*'],
@@ -38,6 +40,10 @@ export const BROWSER_ATS_PATTERNS: Record<BrowserAtsPlatform, string[]> = {
 export function browserAtsBoardFromUrl(platform: string, value: string): string | null {
     if (!isBrowserAtsPlatform(platform))
         return null;
+    if (platform === 'paycor') {
+        const identity = paycorIdentity(value);
+        return identity ? paycorBoardUrl(identity.clientId) : null;
+    }
     try {
         const u = new URL(value);
         if (!['https:', 'http:'].includes(u.protocol) || u.username || u.password || u.port)

@@ -511,6 +511,18 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
 
+    const paycorBoard = browserAtsBoardFromUrl('paycor', url);
+    if (paycorBoard) {
+      const [{ browserPostingLink }, { BrowserAtsHttpReader }] = await Promise.all([
+        import('./browserAtsPosting'), import('./browserAtsHttp'),
+      ]);
+      const link = browserPostingLink('paycor', paycorBoard, url);
+      if (!link) return null;
+      const posting = await new BrowserAtsHttpReader().detail('paycor', paycorBoard, link);
+      return posting ? { text: posting.description, title: posting.title, company: posting.company,
+        location: posting.location, ats: 'Paycor', platform: 'paycor', atsSlug: paycorBoard } : null;
+    }
+
     const brassringBoard = browserAtsBoardFromUrl('brassring', url);
     if (brassringBoard) {
       const [{ browserPostingLink }, { BrassringHttpDetailReader }] = await Promise.all([

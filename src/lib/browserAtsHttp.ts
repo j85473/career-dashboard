@@ -1,3 +1,4 @@
+import { paycorPublicListing } from './paycorPublic';
 import { icimsListingUrl, icimsPublicListing } from './icimsPublicListing';
 import { assertPublicBoardAvailable, PublicBoardUnavailableError } from './publicBoardAvailability';
 import { PaycomPublicHttp } from './paycomPublicHttp';
@@ -18,7 +19,7 @@ const signature = (links: BrowserPostingLink[]) => createHash('sha256').update(l
 const companyKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 const companyName = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 1
     && value.length < 200 && /[a-z]/i.test(value) && !isPlaceholderEmployerName(value) && !/^(?:careers?|jobs?|paylocity)$/i.test(value.trim());
-export const canUseBrowserAtsHttp = (platform: string): boolean => platform === 'paylocity' || platform === 'icims' || platform === 'paycom';
+export const canUseBrowserAtsHttp = (platform: string): boolean => platform === 'paylocity' || platform === 'icims' || platform === 'paycom' || platform === 'paycor';
 export const canUseBrowserAtsHttpDetail = (platform: string): boolean => canUseBrowserAtsHttp(platform) || platform === 'brassring';
 
 /** Parse only JSON emitted by the public page; never execute page scripts. */
@@ -119,6 +120,11 @@ export class BrowserAtsHttpReader {
         if (!canUseBrowserAtsHttp(platform) || browserAtsBoardFromUrl(platform, board) !== board
             || !Number.isSafeInteger(page) || page < 1 || page > 1000
             || pageUrl && browserAtsBoardFromUrl(platform, pageUrl) !== board) return null;
+        if (platform === 'paycor') {
+            if (page !== 1 || pageUrl && pageUrl !== board) return null;
+            const doc = await this.document(board);
+            return doc ? paycorPublicListing(doc, board) : null;
+        }
         if (platform === 'paycom') return this.paycom.page(board, page, pageUrl);
         if (platform === 'paylocity') {
             // This is one complete publisher catalogue, not a synthetic page

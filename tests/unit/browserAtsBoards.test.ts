@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { BROWSER_ATS_PLATFORMS, browserAtsBoardFromUrl, BROWSER_ATS_PATTERNS } from '../../src/lib/browserAtsBoards';
 import { isAtsBoardEnabledForIngestion } from '../../src/lib/atsRotation';
 const urls: Record<string,string> = {
+ paycor:'https://recruitingbypaycor.com/career/CareerHome.action?clientId=8a7883d084f5018f0185307964581b2d',
  adp:'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=87997030-820d-4515-bec9-cf549d124af7&jobId=739758',
  avature:'https://koch.avature.net/en_US/careers/JobDetail/United-States-Pricing-Analyst/196285',
  brassring:'https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26350&siteid=6930&jobid=1437380',

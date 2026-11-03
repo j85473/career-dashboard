@@ -81,8 +81,14 @@ website identity. A plain homepage title requires independent corroboration
 in the exact posting's description. Names are never derived from tenant IDs,
 hostnames or social links. A zero-job first page requires both an explicit zero
 total and the same career center's published indicator before completing.
-Unverified employers and posting identities retain the incomplete-evidence
-retry policy. These changes do not revisit saved scores or lifecycle choices.
+Unverified posting identities retain the incomplete-evidence retry policy.
+Complete, verified postings with missing employer names are retained as
+“Unknown Company” so that the crawl can continue to later jobs and pages.
+Published employer evidence still supplies the name when available. This
+applies to shared browser parsing and the ADP, Paylocity, Paycom and BrassRing
+HTTP readers; missing titles or full descriptions retain their existing
+validation and retry behavior. These changes do not revisit saved scores or
+lifecycle choices.
 
 An HTTP 404/410 on an exact, unfiltered iCIMS listing now uses the existing
 unavailable-board retry policy without opening a browser for the same page.
@@ -698,3 +704,34 @@ completed collections from repeated completion turns. First-collection metrics
 require receipts from this release; older receipts are not inferred as zero
 first collections. Compare stable windows and provider mix before claiming a
 sustained speedup.
+
+### Paycor collection and discovery (November 3, 2026)
+
+Paycor belongs to **ATS Crawling**, with ordinary HTTP as the first transport
+and the existing licensed browser handoff when HTTP cannot verify a page.
+Common Crawl harvests both `recruitingbypaycor.com/career/*` and the legacy
+`newton.newtonsoftware.com/career/*`. Published client IDs normalize to the
+current Paycor board URL; published job IDs normalize to one stable posting
+URL, so legacy and current links cannot create separate crawler identities.
+
+The collector verifies the public, unfiltered English catalogue, its tenant and
+public-only form settings, then saves the whole listing as one durable page.
+Large catalogues retain posting offsets across bounded worker turns. Details
+require matching client/job IDs in the application action and the full
+publisher description container. All published locations survive; missing
+employer branding remains unknown and posting dates are not invented.
+Filtered pages, incomplete markup, challenges and identity conflicts cannot
+report successful completion. Collection uses existing intake filters and
+never expires cards or changes scores when a posting disappears.
+
+For a live, read-only verification, run
+`node --import tsx scripts/verify_paycor_ats.ts`. Add `--apply` to register only
+the verified Paycor launch board, preserving existing boards, exclusions and
+schedules. Start `career-dashboard-discovery.service` to harvest the new
+patterns; its durable worker downloads Common Crawl directories and only the
+compressed index ranges needed for uncovered patterns. Exact receipts from
+finished audits are reused, so adding Paycor does not download other
+providers' completed ranges again. In-flight local scans finish first, then
+remaining indexes run newest first. Existing cursors and candidate outcomes
+remain authoritative. The separate web-discovery crawler keeps its existing
+robots policy; Paycor support does not modify that policy.

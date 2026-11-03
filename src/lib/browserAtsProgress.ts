@@ -1,3 +1,4 @@
+import { PAYCOR_CATALOGUE_LIMIT } from './paycorPublic';
 import { PAYCOM_HTTP_CATALOGUE_LIMIT } from './paycomPublicHttp';
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
 import { BrowserPostingEvidenceError, browserPostingLink, type BrowserPostingLink, type BrowserPosting } from './browserAtsPosting';
@@ -41,7 +42,8 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
     if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)
         return newBrowserSweep(board);
     const p = value as BrowserSweepProgress;
-    const queueLimit = platform === 'paycom' && p?.transport === 'http-v1' && p.page === 1 && p.next === null && p.total === p.queue?.length
+    const queueLimit = platform === 'paycor' && p?.page === 1 && p.next === null && p.total === p.queue?.length
+        ? PAYCOR_CATALOGUE_LIMIT : platform === 'paycom' && p?.transport === 'http-v1' && p.page === 1 && p.next === null && p.total === p.queue?.length
         ? PAYCOM_HTTP_CATALOGUE_LIMIT : 250;
     if (!p || p.version !== 1 || p.board !== board || browserAtsBoardFromUrl(platform, board) !== board || !Number.isInteger(p.page) || p.page < 1 || p.page > BROWSER_MAX_PAGES || !Array.isArray(p.queue) || p.queue.length > queueLimit || !Number.isInteger(p.offset) || p.offset < 0 || p.offset > p.queue.length || !Array.isArray(p.seen) || p.seen.length > BROWSER_MAX_SEEN_IDS || !p.seen.every(id => typeof id === 'string') || !Array.isArray(p.signatures) || p.signatures.length > BROWSER_MAX_PAGES || !p.signatures.every(x => typeof x === 'string') || typeof p.loaded !== 'boolean')
         throw Error('Invalid durable public-board progress; preserving it for review');
