@@ -55,6 +55,45 @@ test('incomplete or unavailable SuccessFactors metadata stays retryable instead 
   }
 });
 
+test('SuccessFactors acquisition uses title discovery outside the first response fence and preserves its saved payload', async () => {
+  const job = { title: 'Area Sales Manager', company: '', location: '', description: 'Original description', publicAtsPostingId: '53169',
+    url: 'https://career4.successfactors.com/career?company=Other&career_ns=job_listing&career_job_req_id=53169' };
+  const original = structuredClone(job), harness = createHarness();
+  let held = false;
+  const requests: string[] = [], signals: AbortSignal[] = [];
+  harness.dependencies.fetchPlatformResponse = async (_platform, _signal, request, options) => {
+    assert.equal(held, false, 'linked recovery must not nest vendor response fences');
+    held = true;
+    try { const response = await request(); await options?.onResponse?.(response); return response; }
+    finally { held = false; }
+  };
+  harness.dependencies.safeExternalFetch = async (target, init) => {
+    const url = new URL(String(target)); requests.push(url.href);
+    if (url.hostname === 'career4.successfactors.com') return new Response(
+      '<input id="career_company" value="Other"><input id="career_job_req_id" value="53169">'
+      + '<div class="pagetitle"><h1>Career Opportunities: Area Sales Manager (53169)</h1></div>'
+      + '<div class="joqReqDescription"><div class="externalPosting">Original description</div></div>'
+      + '<script>var logout="https://jobs.example.com/services/security/logoutp?callback=done";</script>');
+    assert.ok(init?.signal); signals.push(init.signal);
+    if (url.pathname === '/search/') return new Response(url.searchParams.get('q') === '53169' ? '<p>No results</p>'
+      : '<a class="jobTitle-link" href="/job/manager/12345/">Area Sales Manager</a>');
+    return new Response('<script data-company-job-code="53169-en_GB"></script><h1>Area Sales Manager</h1>'
+      + '<meta itemprop="hiringOrganization" content="Verified Employer">'
+      + '<span itemprop="jobLocation"><meta itemprop="addressLocality" content="Chennai"></span>');
+  };
+  const result = await enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Other::default', job,
+    requestTimeoutMs: 1000, ...harness.inputCallbacks }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(result)?.company, 'Verified Employer');
+  assert.equal(readAtsJobEnrichmentMarker(result)?.location, 'Chennai');
+  assert.equal(readAtsJobEnrichmentMarker(result)?.description, 'Original description');
+  assert.deepEqual(job, original);
+  assert.equal(requests.length, 4);
+  assert.equal(harness.started, 4);
+  assert.equal(harness.responded.length, 4);
+  assert.equal(harness.reservations.filter(source => source === 'ATS-successfactors Details').length, 4);
+  assert.ok(signals.every(signal => signal === signals[0]), 'all secondary requests share one bounded deadline');
+});
+
 test('repeated incomplete SuccessFactors details back off to daily retries while retaining their raw content', async () => {
   const job = { title: 'Area Sales Manager', company: 'Verified employer', location: '', description: 'Original description',
     publicAtsPostingId: '53169', url: 'https://career4.successfactors.com/career?company=Other&career_ns=job_listing&career_job_req_id=53169' };

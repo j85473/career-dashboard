@@ -129,6 +129,31 @@ request deadline and a bounded five-minute posting cache, and never guesses
 from tenant IDs. Missing or conflicting evidence retains the existing hold.
 Installing the change does not release holds in bulk or edit existing scores.
 
+### SuccessFactors discovery and ADP employer proof (November 3, 2026)
+
+SuccessFactors metadata recovery first searches its explicitly linked employer
+portal by the underlying SAP requisition number. If that returns no matching
+title, it also searches the published title. Search results are discovery only:
+at most three distinct candidate pages may be read, and each must independently
+match both the SAP requisition and title before supplying metadata. Locale
+duplicates may corroborate the same fields; conflicting names or locations
+retain the existing incomplete-evidence behavior. Acquisition gives the whole
+linked-site recovery one fifteen-second deadline and retains provider controls.
+Unavailable postings and same-title sibling requisitions cannot supply missing
+metadata. Saved retries, raw work and scores are not reset.
+
+ADP employer recovery also reads explicit corporate links on the career
+center's primary logo. A published hostname without a scheme may be requested
+over HTTPS; filenames, tenant IDs and social links remain insufficient. Both
+published client-name field spellings are supported, with conflicting names
+rejected. Authored About Us and Company Overview sections can identify their
+employer when their named introductory subject has independent hiring or
+first-person staff language. Optional client-configuration response failures
+allow other source proof to be checked; unavailable optional career-center or
+corporate-site metadata retains the exact posting without inventing a name.
+Operator/admission checks still stop collection. The separate behavior allowing unnamed verified postings to
+continue remains intact, and this change does not bulk-edit existing cards.
+
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 
 ### Reconciling the four-day API rotation

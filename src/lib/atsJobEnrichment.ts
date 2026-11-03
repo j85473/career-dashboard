@@ -576,13 +576,16 @@ function preparedDetailPlan(input: {
     }, complete: async dependencies => {
       // The first response fence has been released before another request is
       // made. Nested provider reservations can otherwise deadlock the pool.
+      const recoveryDeadline = AbortSignal.timeout(15000);
+      const recoverySignal = input.signal ? AbortSignal.any([input.signal, recoveryDeadline]) : recoveryDeadline;
       const metadata = await recoverSuccessFactorsMetadata(pageHtml, url, async target => {
+        recoverySignal.throwIfAborted();
         const decision = await dependencies.reserveProviderBudgetForSource(`ATS-${platform} Details`);
         if (!decision.allowed) throw await deferredError(dependencies, platform, decision.retryAt);
-        const result = await dependencies.fetchPlatformResponse(platform, input.signal, async () => {
+        const result = await dependencies.fetchPlatformResponse(platform, recoverySignal, async () => {
           try { await input.onRequestStarted?.(); } catch (error) { throw new AtsEnrichmentControlError(error); }
           return dependencies.safeExternalFetch(target, { headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent },
-            signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000) });
+            signal: recoverySignal });
         }, { requestedUrl: target, boardSlug: slug, recordPlatformFailures: false });
         try { await input.onResponseReceived?.({ status: result.status, respondedAt: dependencies.now() }); }
         catch (error) { throw new AtsEnrichmentControlError(error); }

@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import { safeExternalFetch } from './safeExternalFetch';
 import { manualImportCompanyValue } from './manualImportPolicy';
 import { adpPostingIdentity } from './adpPostingIdentity';
+import { publishedEmployerName } from './publicAtsEmployer';
 
 export { adpPostingIdentity } from './adpPostingIdentity';
 
@@ -27,10 +28,38 @@ export function parseAdpClientCompany(body: unknown): string | undefined {
   if (!Array.isArray(fields)) return undefined;
   const names = new Set<string>();
   for (const field of fields) {
-    if (field?.nameCode?.codeValue !== 'ClientName') continue;
+    if (!['ClientName', 'CLIENT_NAME'].includes(field?.nameCode?.codeValue)) continue;
+    if (typeof field.stringValue === 'string' && !field.stringValue.trim()) continue;
     const name = typeof field.stringValue === 'string' ? manualImportCompanyValue(field.stringValue) : undefined;
     if (!name || name.length > 200 || /^(?:ADP|Workforce Now|ADP Workforce Now|Default(?: Brand(?:ing)?)?|Recruitment|Careers?)$/i.test(name)) return undefined;
     names.add(name);
+  }
+  return names.size === 1 ? [...names][0] : undefined;
+}
+
+/** Authored employer sections need a named introductory subject plus a
+ * matching hiring statement or first-person description of its own staff. */
+function authoredAdpEmployer($: cheerio.CheerioAPI): string | undefined {
+  const names = new Set<string>();
+  const normalize = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const postingText = normalize($('h1,h2,h3,h4,p,li').toArray().map(node => $(node).text()).join(' '));
+  for (const node of $('h1,h2,h3,h4,p').toArray()) {
+    const heading = normalize($(node).text());
+    const next = $(node).nextAll().toArray().slice(0, 10).map(sibling => normalize($(sibling).text())).filter(Boolean);
+    const named = /^About\s+(.{2,100})$/i.exec(heading);
+    if (named && !/^(?:us|the role|the company|you|the team)$|^(?:our|the) (?:clients?|customers?)\b/i.test(named[1])
+      && (next[0]?.startsWith(`At ${named[1]},`) || next[0]?.startsWith(`${named[1]} `))) {
+      const name = publishedEmployerName(named[1]);
+      if (name) names.add(name);
+    }
+    if (!/^(?:about us|company overview)\s*:?$/i.test(heading)) continue;
+    const subject = /^(.{2,100}?)\s+(?:is|are)\b/i.exec(next[0] || '')?.[1];
+    const name = publishedEmployerName(subject);
+    if (!name || /^(?:we|it|this|our|the company|the team|the role)$|^(?:our|the) (?:clients?|customers?)\b/i.test(name)
+      || /^\s+(?:is|are)\s+(?:a|our|the)\s+(?:client|customer)\b/i.test((next[0] || '').slice(subject!.length))) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const hiring = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}\\s+(?:is|are)\\s+(?:seeking|hiring|recruiting|looking\\s+for)\\b`, 'iu');
+    if (hiring.test(postingText) || /\bour (?:team|company|spas|employees|organization|staff)\b/i.test(next.slice(0, 3).join(' '))) names.add(name);
   }
   return names.size === 1 ? [...names][0] : undefined;
 }
@@ -44,16 +73,8 @@ export function parseAdpPosting(body: unknown, url: string) {
   const id = job.customFieldGroup?.stringFields?.find(field => field.nameCode?.codeValue === 'ExternalJobID')?.stringValue;
   if (id !== identity.jobId || !job.requisitionTitle?.trim() || typeof job.requisitionDescription !== 'string') return null;
   const $ = cheerio.load(job.requisitionDescription);
-  // Only an authored company heading corroborated by its opening sentence is
-  // employer evidence. Client tokens and the ADP hostname are infrastructure.
-  let company: string | undefined;
-  for (const node of $('h1,h2,h3').toArray()) {
-    const match = /^About\s+(.{2,100})$/.exec($(node).text().trim());
-    const next = $(node).next().text().trim();
-    if (match && !/^(?:us|the role|the company|you|the team)$/i.test(match[1])
-      && (next.startsWith(`At ${match[1]},`) || next.startsWith(`${match[1]} `))) { company = match[1]; break; }
-  }
   $('script,style').remove();
+  const company = authoredAdpEmployer($);
   $('p,div,li,h1,h2,h3,br').append('\n');
   const text = $.root().text().replace(/[\t ]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
   const locations = [...new Set((job.requisitionLocations || []).map(place => place.nameCode?.shortName?.trim()).filter(Boolean))];

@@ -286,7 +286,7 @@ export async function recoverSuccessFactorsMetadata(html: string, url: string,
   const portalName = publishedEmployerName(searchPage('meta[property="og:site_name"]').attr('content'))
     || publishedEmployerName(value(searchPage('title').text()).match(new RegExp(`^${identity.id}\\s+-\\s+(.+?)(?: Jobs| Careers)?$`, 'i'))?.[1]);
   const base = { ...primary, company: primary.company || portalName || undefined };
-  const links = successFactorsCareerPostingLinks(searchHtml, site, primary.title);
+  let links = successFactorsCareerPostingLinks(searchHtml, site, primary.title);
   // Royal Mail moved the linked SAP portal to Phenom. Its public route and
   // JSON-LD retain the same SAP requisition; do not generalize this URL shape
   // to unrelated employers or accept a homepage as exact posting evidence.
@@ -295,8 +295,24 @@ export async function recoverSuccessFactorsMetadata(html: string, url: string,
     const detail = parseSuccessFactorsCareerPosting(await readPage(detailUrl), identity.id, primary.title);
     return detail ? { ...base, company: detail.company || base.company, location: primary.location || detail.location } : base;
   }
-  // An ambiguous keyword result cannot identify this posting.
-  if (links.length !== 1) return base;
-  const detail = parseSuccessFactorsCareerPosting(await readPage(links[0]), identity.id, primary.title);
-  return detail ? { ...base, company: detail.company || base.company, location: primary.location || detail.location } : base;
+  // Recruiting Marketing often does not index the underlying SAP requisition
+  // number. Title search only discovers candidates; each detail must still
+  // prove the exact SAP ID and title. Never use a sibling role's location.
+  if (!links.length) {
+    const titleSearch = new URL('/search/', site);
+    titleSearch.searchParams.set('q', primary.title);
+    links = successFactorsCareerPostingLinks(await readPage(titleSearch.href), site, primary.title);
+  }
+  if (!links.length || links.length > 3) return base;
+  const details: SuccessFactorsMetadata[] = [];
+  for (const link of links) {
+    const detail = parseSuccessFactorsCareerPosting(await readPage(link), identity.id, primary.title);
+    if (detail) details.push(detail);
+  }
+  // Locale variants can publish the same requisition at multiple URLs. Use
+  // their metadata only when all exact matches agree on each supplied field.
+  const companies = [...new Set(details.map(detail => detail.company).filter(Boolean))];
+  const locations = [...new Set(details.map(detail => detail.location).filter(Boolean))];
+  if (companies.length > 1 || locations.length > 1) return base;
+  return { ...base, company: companies[0] || base.company, location: primary.location || locations[0] };
 }

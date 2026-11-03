@@ -125,7 +125,50 @@ test('multiple search matches and unrelated external result links provide no met
     return '<a class="jobTitle-link" href="/job/one/123/">one</a><a class="jobTitle-link" href="/job/two/456/">two</a>';
   });
   assert.equal(result?.company, undefined);
-  assert.equal(count, 1);
+  assert.equal(count, 2, 'the bounded title fallback also rejects unrelated matches');
+});
+
+test('SAP title discovery resolves a requisition omitted from keyword search and reconciles locale duplicates', async () => {
+  const source = page('Other') + '<script>var endpoint="https://jobs.example.com/services/security/logoutp?callback=callback";</script>';
+  const requests: string[] = [];
+  const result = await recoverSuccessFactorsMetadata(source, url.replace('Mahindra', 'Other'), async target => {
+    requests.push(target);
+    const query = new URL(target);
+    if (query.pathname === '/search/') return query.searchParams.get('q') === '53169' ? '<p>No results</p>'
+      : '<a class="jobTitle-link" href="/job/one/111/">Area Sales Manager</a>'
+        + '<a class="jobTitle-link" href="/job/two/222/">Area Sales Manager</a>'
+        + '<a class="jobTitle-link" href="/job/three/333/">Area Sales Manager</a>';
+    return target.includes('/three/') ? career('99999') : career();
+  });
+  assert.equal(result?.company, 'Mahindra & Mahindra Limited');
+  assert.equal(result?.location, 'Chennai, IN');
+  assert.equal(requests.length, 5);
+  assert.equal(new URL(requests[1]).searchParams.get('q'), 'Area Sales Manager');
+});
+
+test('SAP title search never copies a same-title sibling or resolves conflicting exact metadata', async () => {
+  const source = page('Other') + '<script>var endpoint="https://jobs.example.com/services/security/logoutp?callback=callback";</script>';
+  const links = '<a class="jobTitle-link" href="/job/one/111/">Area Sales Manager</a>'
+    + '<a class="jobTitle-link" href="/job/two/222/">Area Sales Manager</a>';
+  for (const conflict of [false, true]) {
+    const result = await recoverSuccessFactorsMetadata(source, url.replace('Mahindra', 'Other'), async target => {
+      if (new URL(target).pathname === '/search/') return links;
+      return conflict ? (target.includes('/one/') ? career() : career().replace('Chennai', 'Mumbai')) : career('99999');
+    });
+    assert.equal(result?.location, undefined);
+    assert.equal(result?.company, undefined);
+  }
+});
+
+test('SAP title discovery stays bounded when more than three distinct candidates match', async () => {
+  const source = page('Other') + '<script>var endpoint="https://jobs.example.com/services/security/logoutp?callback=callback";</script>';
+  const requests: string[] = [];
+  const result = await recoverSuccessFactorsMetadata(source, url.replace('Mahindra', 'Other'), async target => {
+    requests.push(target);
+    return Array.from({ length: 4 }, (_v, index) => `<a class="jobTitle-link" href="/job/role/${index}/">Area Sales Manager</a>`).join('');
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(result?.location, undefined);
 });
 
 test('disabled LinkedIn integration still publishes a verifiable inert requisition code', () => {

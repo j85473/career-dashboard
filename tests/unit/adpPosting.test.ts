@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { adpClientFeaturesUrl, fetchAdpPosting, parseAdpClientCompany } from '../../src/lib/adpPosting';
+import { adpClientFeaturesUrl, fetchAdpPosting, parseAdpClientCompany, parseAdpPosting } from '../../src/lib/adpPosting';
 import type { safeExternalFetch } from '../../src/lib/safeExternalFetch';
 
 const url = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=87997030-820d-4515-bec9-cf549d124af7&ccId=19000101_000001&jobId=739758&lang=en_US';
@@ -78,4 +78,39 @@ test('a verified employer heading keeps precedence over tenant configuration', a
   }))!;
   assert.equal(posting.company, 'Verified Employer');
   assert.equal(calls, 1);
+});
+
+test('ADP recognizes both published client-name fields while rejecting conflicts and ignoring empty aliases', () => {
+  const fields = (names: Array<[string, string]>) => ({ meta: { customFieldGroup: {
+    stringFields: names.map(([codeValue, stringValue]) => ({ nameCode: { codeValue }, stringValue })),
+  } } });
+  assert.equal(parseAdpClientCompany(fields([['CLIENT_NAME', 'Example Employer']])), 'Example Employer');
+  assert.equal(parseAdpClientCompany(fields([['CLIENT_NAME', ''], ['ClientName', 'Example Employer']])), 'Example Employer');
+  assert.equal(parseAdpClientCompany(fields([['CLIENT_NAME', 'Other Employer'], ['ClientName', 'Example Employer']])), undefined);
+  assert.equal(parseAdpClientCompany(fields([['CLIENT_ID', 'Example Employer']])), undefined);
+});
+
+test('ADP authored employer sections survive editor paragraphs, inline formatting and blank lines', () => {
+  for (const description of [
+    '<p><span>ABOUT US</span></p><p>Example Employer is an education provider.</p><p>SUMMARY</p><p>Example Employer is seeking an account manager.</p>',
+    '<p><strong>Company Overview:</strong></p><p>&nbsp;</p><p><br></p><p>Example Employer is a technology business. Our team builds useful products.</p>',
+  ]) {
+    const parsed = parseAdpPosting({ ...fixture, requisitionDescription: description }, url);
+    assert.equal(parsed?.company, 'Example Employer');
+    assert.equal(parsed?.title, fixture.requisitionTitle);
+    assert.match(parsed!.text, /Example Employer/);
+    assert.equal(parseAdpPosting({ ...fixture, requisitionDescription: description }, url.replace('739758', '999999')), null);
+  }
+});
+
+test('ADP employer sections reject client mentions, unnamed subjects, conflicting companies and script-only evidence', () => {
+  for (const description of [
+    '<p>Our client Example Employer is hiring an account manager.</p>',
+    '<p>About Us</p><p>Our client is seeking staff. Our team helps them hire.</p>',
+    '<p>Company Overview</p><p>Our client Example Employer is seeking staff. Our team helps them hire.</p>',
+    '<p>About Us</p><p>Example Employer is a client. Our team provides support.</p>',
+    '<p>About Us</p><p>Example Employer is a client. We provide support.</p>',
+    '<h2>About Example Employer</h2><p>At Example Employer, we build products.</p><h2>About Other Employer</h2><p>At Other Employer, we build products.</p>',
+    '<script>var text="About Us Example Employer is hiring staff. Our team is growing.";</script>',
+  ]) assert.equal(parseAdpPosting({ ...fixture, requisitionDescription: description }, url)?.company, undefined);
 });

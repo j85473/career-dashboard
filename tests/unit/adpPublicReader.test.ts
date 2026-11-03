@@ -20,12 +20,14 @@ const client = { meta: { customFieldGroup: { stringFields: [
     { nameCode: { codeValue: 'CLIENT_ID' }, stringValue: 'opaque-infrastructure-token' },
 ] } } };
 
-function harness(options: { total?: number; jobs?: unknown[]; center?: unknown; company?: string; siteHtml?: string; siteLanded?: string; redirectJson?: boolean; description?: string } = {}) {
+function harness(options: { total?: number; jobs?: unknown[]; center?: unknown; company?: string; siteHtml?: string; siteLanded?: string; redirectJson?: boolean; description?: string;
+    clientFailure?: 'network' | 'status' | 'invalid-json'; centerFailure?: boolean; websiteFailure?: boolean } = {}) {
     const calls: string[] = [];
     const reader = new AdpPublicReader(board, async () => {}, async target => {
         calls.push(target);
         const url = new URL(target);
         if (url.origin === new URL(site).origin) {
+            if (options.websiteFailure) throw Error('Employer website timed out');
             const response = new Response(options.siteHtml ?? '<meta property="og:site_name" content="Verified Employer">');
             Object.defineProperty(response, 'url', { value: options.siteLanded || site });
             return response;
@@ -36,10 +38,16 @@ function harness(options: { total?: number; jobs?: unknown[]; center?: unknown; 
         let body: unknown;
         if (url.pathname.endsWith('client-features')) {
             assert.equal(url.searchParams.get('jobId'), '42');
+            if (options.clientFailure === 'network') throw Error('Temporary connection failure');
+            if (options.clientFailure === 'status') return new Response('', { status: 503 });
+            if (options.clientFailure === 'invalid-json') return new Response('not JSON');
             body = options.company ? { meta: { customFieldGroup: { stringFields: [
                 { nameCode: { codeValue: 'ClientName' }, stringValue: options.company },
             ] } } } : client;
-        } else if (url.pathname.endsWith('career-center')) body = options.center ?? center();
+        } else if (url.pathname.endsWith('career-center')) {
+            if (options.centerFailure) return new Response('', { status: 503 });
+            body = options.center ?? center();
+        }
         else if (url.pathname.endsWith('/job-requisitions')) body = { jobRequisitions: options.jobs ?? [], meta: { totalNumber: options.total ?? 0 } };
         else body = { ...job(url.pathname.split('/').at(-1)!), ...(options.description ? { requisitionDescription: options.description } : {}) };
         const response = Response.json(body);
@@ -150,4 +158,56 @@ test('ADP safety checks propagate before any network request', async () => {
     const reader = new AdpPublicReader(board, async () => { throw Error('Collection paused'); }, async () => { throw Error('must not fetch'); });
     await assert.rejects(reader.listing(1), /Collection paused/);
     await assert.rejects(reader.detail(link()), /Collection paused/);
+});
+
+test('ADP explicit corporate logo links and scheme-less published hostnames can supply website evidence', async () => {
+    const configuration = center();
+    configuration.contentLinks[0].linkTypeCode.codeValue = 'IMG_LOGO';
+    configuration.contentLinks[0].contentBody.links[0].href = 'www.employer.example';
+    assert.equal(adpEmployerWebsite(configuration), site);
+    assert.equal((await harness({ center: configuration }).reader.detail(link())).company, 'Verified Employer');
+    for (const href of ['/apps/logo.png', 'javascript:alert(1)', 'employer.example@other.example', 'employer.example:8443/',
+        'https://linkedin.com/company/example', 'https://user:password@employer.example/']) {
+        configuration.contentLinks[0].contentBody.links[0].href = href;
+        assert.equal(adpEmployerWebsite(configuration), null);
+    }
+});
+
+test('optional ADP client-configuration failures retain the exact JD and allow independent corporate proof', async () => {
+    for (const clientFailure of ['network', 'status', 'invalid-json'] as const) {
+        const { reader, calls } = harness({ clientFailure });
+        const posting = await reader.detail(link());
+        assert.equal(posting.company, 'Verified Employer');
+        assert.equal(posting.description, description.trim());
+        assert.equal(calls.filter(target => target.includes('client-features')).length, 1);
+        assert.equal(calls.filter(target => target === site).length, 1);
+    }
+});
+
+test('an ADP pause during optional configuration cannot be swallowed as a recoverable response error', async () => {
+    let checks = 0, requests = 0;
+    const reader = new AdpPublicReader(board, async () => { if (++checks === 2) throw Error('Collection paused'); }, async () => {
+        requests++; return Response.json(job('42'));
+    });
+    await assert.rejects(reader.detail(link()), /Collection paused/);
+    assert.equal(requests, 1);
+});
+
+test('optional ADP career-center and corporate-site outages preserve verified postings without inventing an employer', async () => {
+    for (const options of [{ centerFailure: true }, { websiteFailure: true }]) {
+        const posting = await harness(options).reader.detail(link());
+        assert.equal(posting.company, 'Unknown Company');
+        assert.equal(posting.id, '42');
+        assert.equal(posting.description, description.trim());
+    }
+});
+
+test('a pause before the corporate website request still stops ADP collection', async () => {
+    let checks = 0, requests = 0;
+    const reader = new AdpPublicReader(board, async () => { if (++checks === 4) throw Error('Collection paused'); }, async target => {
+        requests++;
+        return Response.json(target.includes('client-features') ? client : target.includes('career-center') ? center() : job('42'));
+    });
+    await assert.rejects(reader.detail(link()), /Collection paused/);
+    assert.equal(requests, 3);
 });
