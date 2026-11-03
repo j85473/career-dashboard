@@ -214,6 +214,7 @@ function taleoPublishedCompany(html: string, url: string): string | null {
 }
 /** Published page evidence only. Missing employer or location is never inferred from tenant tokens. */
 export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink, docs: BrowserDocument[]): BrowserPosting | null {
+    let unresolved: BrowserPosting | null = null;
     for (const doc of docs) {
         const current = browserPostingLink(platform, board, doc.url);
         if (!current || current.id !== link.id)
@@ -333,10 +334,15 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
             location = $('.contentlinepanel').filter((_, n) => /^(?:Primary Location|Work Locations)/.test($(n).text().trim())).map((_, n) => $(n).text().trim()).get().join('; ');
         if (!location && platform === 'dzconnex')
             location = /^\s*Location:\s*(.+)$/m.exec(description)?.[1] || '';
-        if (title && company && validCompany(company) && description.length >= 200) {
+        if (title && description.length >= 200) {
             const postedAt = typeof structured?.datePosted === 'string' ? new Date(structured.datePosted) : undefined;
-            return { ...link, title, company, description, location, ...(postedAt && !Number.isNaN(postedAt.getTime()) ? { postedAt } : {}) };
+            const posting = { ...link, title, company: company && validCompany(company) ? company : 'Unknown Company', description, location, ...(postedAt && !Number.isNaN(postedAt.getTime()) ? { postedAt } : {}) };
+            if (posting.company !== 'Unknown Company') return posting;
+            // Preserve the exact requisition and its full content even when
+            // branding is absent. Prefer a verified employer in another frame,
+            // but never keep the whole board on this page for a missing name.
+            unresolved ||= posting;
         }
     }
-    return null;
+    return unresolved;
 }

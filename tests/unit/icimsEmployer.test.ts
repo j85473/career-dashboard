@@ -27,7 +27,7 @@ test('iCIMS recovers the named employer from its opening overview when structure
 test('unavailable labels cannot identify an employer, while real names retain the word', () => {
   for (const name of ['UNAVAILABLE', 'Unavailable', 'unavailable', 'un-available']) assert.equal(isPlaceholderEmployerName(name), true);
   assert.equal(isPlaceholderEmployerName('Unavailable Technologies'), false);
-  assert.equal(parse('Lead our sales team.')?.company, undefined);
+  assert.equal(parse('Lead our sales team.')?.company, 'Unknown Company');
 });
 
 test('employer recovery preserves explicit identity and refuses customer mentions or another requisition', () => {
@@ -35,7 +35,7 @@ test('employer recovery preserves explicit identity and refuses customer mention
   for (const introduction of ['Our client is a commercial laundry company.', 'The company is a commercial laundry company.',
     'Our brand is a trusted equipment supplier.', 'Example Inc is a client of our staffing agency.',
     'Lead our team. Alliance Laundry Systems Distribution is a full-service provider.']) {
-    assert.equal(parse(introduction), null);
+    assert.equal(parse(introduction)?.company, 'Unknown Company');
   }
   assert.equal(parse('Alliance Laundry Systems Distribution is a full-service provider.', 'UNAVAILABLE', undefined,
     'https://distribution-alliancelaundry.icims.com/jobs/999/other/job'), null);

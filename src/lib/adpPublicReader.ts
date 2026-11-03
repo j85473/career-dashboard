@@ -7,6 +7,7 @@ import { adpClientFeaturesUrl, parseAdpClientCompany, parseAdpPosting } from './
 import { employerWebsiteName, publishedEmployerName } from './publicAtsEmployer';
 import { safeExternalFetch } from './safeExternalFetch';
 import { readBoundedAtsBody } from './tenantAtsBoards';
+import { isPlaceholderEmployerName } from './companyIdentity';
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 type CareerCenter = { contentLinks?: Array<{ linkTypeCode?: { codeValue?: string }; contentBody?: { links?: Array<{ href?: string }> } }>;
@@ -140,8 +141,10 @@ export class AdpPublicReader {
         if (browserPostingLink('adp', this.board, link.url)?.id !== link.id) throw Error('ADP posting escaped its career-center identity');
         const posting = parseAdpPosting(await this.json(this.endpoint('v1/job-requisitions/' + link.id).href), link.url);
         if (!posting) throw Error('ADP exact posting validation failed');
-        const company = posting.company || await this.company(link.url, posting.text);
-        if (!company) throw Error('ADP employer is unverified');
+        // Employer branding enriches an already verified exact requisition;
+        // an absent name must not stop this board's remaining postings.
+        const name = !isPlaceholderEmployerName(posting.company) ? posting.company : await this.company(link.url, posting.text);
+        const company = name && !isPlaceholderEmployerName(name) ? name : 'Unknown Company';
         return { ...link, title: posting.title, company, description: posting.text, location: posting.location || '' };
     }
 }

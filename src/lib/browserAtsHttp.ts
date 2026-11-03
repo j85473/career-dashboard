@@ -9,6 +9,7 @@ import type { BrowserListing } from './browserAtsReader';
 import { safeExternalFetch } from './safeExternalFetch';
 import { readBoundedAtsBody } from './tenantAtsBoards';
 import { BrassringHttpDetailReader } from './brassringHttpDetail';
+import { isPlaceholderEmployerName } from './companyIdentity';
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 type PaylocityCatalogue = { company: string; links: BrowserPostingLink[] };
@@ -16,7 +17,7 @@ const PAGE_SIZE = 250;
 const signature = (links: BrowserPostingLink[]) => createHash('sha256').update(links.map(j => j.id).sort().join('\n')).digest('hex');
 const companyKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 const companyName = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 1
-    && value.length < 200 && /[a-z]/i.test(value) && !/^(?:unknown(?: company)?|company|careers?|jobs?|paylocity)$/i.test(value.trim());
+    && value.length < 200 && /[a-z]/i.test(value) && !isPlaceholderEmployerName(value) && !/^(?:careers?|jobs?|paylocity)$/i.test(value.trim());
 export const canUseBrowserAtsHttp = (platform: string): boolean => platform === 'paylocity' || platform === 'icims' || platform === 'paycom';
 export const canUseBrowserAtsHttpDetail = (platform: string): boolean => canUseBrowserAtsHttp(platform) || platform === 'brassring';
 
@@ -80,14 +81,17 @@ export class BrowserAtsHttpReader {
         assertPublicBoardAvailable('paylocity', doc);
         if (browserAtsBoardFromUrl('paylocity', doc.url) !== board) return null;
         const data = publicPageData(doc.html);
-        if (!data || data.ShowInternal !== false || !companyName(data.ModuleTitle)
+        if (!data || data.ShowInternal !== false
             || !Array.isArray(data.Jobs) || data.Jobs.length > PAGE_SIZE) return null;
-        const $ = cheerio.load(doc.html), company = data.ModuleTitle.trim();
-        // Bind the JSON employer to page branding before using an empty array
-        // or constructing posting URLs from that board's published identities.
+        const $ = cheerio.load(doc.html);
         const heading = $('header #LayoutLogoName,#LayoutLogoName').first().text().trim();
-        const pageTitle = $('title').text().replace(/\s+-\s+Job Opportunities\s*$/i, '').trim();
-        if (![heading, pageTitle].some(value => companyKey(value) === companyKey(company))) return null;
+        const pageTitle = /^(.*?)\s+-\s+Job Opportunities\s*$/i.exec($('title').text())?.[1]?.trim();
+        const names = [heading, pageTitle].filter(companyName);
+        const configured = companyName(data.ModuleTitle) ? data.ModuleTitle.trim() : '';
+        // Missing branding is optional; contradictory published names still
+        // fail validation. Tenant URL, public flag and exact job IDs bind jobs.
+        if (configured && names.length && !names.some(name => companyKey(name) === companyKey(configured))) return null;
+        const company = configured || (new Set(names.map(companyKey)).size === 1 ? names[0] : 'Unknown Company');
         const links: BrowserPostingLink[] = [], ids = new Set<string>();
         for (const raw of data.Jobs) {
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -102,6 +106,7 @@ export class BrowserAtsHttpReader {
             link.titleVerified = true;
             links.push(link);
         }
+        if (!links.length && isPlaceholderEmployerName(company)) return null;
         const catalogue = { company, links };
         // Readers normally live for one board turn; keep accidental reuse bounded.
         if (this.catalogues.size >= 8) this.catalogues.delete(this.catalogues.keys().next().value!);
@@ -158,7 +163,11 @@ export class BrowserAtsHttpReader {
         let posting: BrowserPosting | null;
         try { posting = parseBrowserPosting(platform, board, link, [doc]); }
         catch { return null; }
-        if (!posting || catalogue && companyKey(posting.company) !== companyKey(catalogue.company)) return null;
+        if (!posting) return null;
+        if (catalogue && !isPlaceholderEmployerName(catalogue.company)) {
+            if (!isPlaceholderEmployerName(posting.company) && companyKey(posting.company) !== companyKey(catalogue.company)) return null;
+            if (isPlaceholderEmployerName(posting.company)) return { ...posting, company: catalogue.company };
+        }
         return posting;
     }
 }

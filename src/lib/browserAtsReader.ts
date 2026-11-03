@@ -546,7 +546,7 @@ export class BrowserAtsReader {
                 await page.waitForTimeout(750);
                 await this.check();
             }
-            throw new BrowserPostingEvidenceError('Job detail lacks a verified employer, title, or full description: ' + link.id);
+            throw new BrowserPostingEvidenceError('Job detail lacks a verified requisition, title, or full description: ' + link.id);
         }
         finally {
             // Reuse the detail tab within this bounded board turn. close() owns both tabs.

@@ -76,7 +76,7 @@ test('Taleo accepts published employer-theme logos without requiring an absent a
 });
 test('Taleo never substitutes social icons, tenant names, conflicting branding or another job', () => {
     for (const logos of ['', '<a><img alt="LinkedIn" src="/careersection/theme/61/images/linkedin.png"></a>', '<a><img alt="Taleo Logo" src="/careersection/theme/61/images/logo.png"></a>', '<a><img alt="Valero Logo" src="/careersection/theme/61/images/logo.png"><img alt="Other Employer Logo" src="/careersection/theme/61/images/otherlogo.png"></a>'])
-        assert.equal(parseBrowserPosting('taleo', taleo, detailLink, [taleoDetail(logos)]), null);
+        assert.equal(parseBrowserPosting('taleo', taleo, detailLink, [taleoDetail(logos)])?.company, 'Unknown Company');
     const valid = taleoDetail('<a class="logo"><img alt="Ansell"></a>');
     assert.equal(parseBrowserPosting('taleo', taleo, detailLink, [valid])?.company, 'Ansell');
     assert.equal(parseBrowserPosting('taleo', taleo, detailLink, [{ ...valid, text: valid.text.replace('30012334', 'OTHER') }]), null);

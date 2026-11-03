@@ -77,7 +77,7 @@ test('an anonymous board session is reused for exact detail POSTs without changi
     assert.equal(JSON.parse(String(request.init.body)).jobid, '42');
 });
 test('bad public sessions and refused, redirected or oversized bodies fall back without trusting their content', async () => {
-    for (const options of [{ html: bootstrap().replace('12345', '99999') }, { html: bootstrap().replace('Example Inc', 'Unknown Company') },
+    for (const options of [{ html: bootstrap().replace('12345', '99999') },
         { html: '<h1>Loading</h1>' }, { status: 403 }, { redirect: 'https://other.example/' }, { oversized: true }]) {
         const f = fake(options);
         assert.equal(await new BrassringHttpDetailReader(async () => {}, f.fetcher).detail(board, link()), null);
@@ -85,6 +85,21 @@ test('bad public sessions and refused, redirected or oversized bodies fall back 
     }
     const f = fake({ data: { error: 'Session expired' } });
     assert.equal(await new BrassringHttpDetailReader(async () => {}, f.fetcher).detail(board, link()), null);
+});
+
+test('BrassRing missing names retain exact job details and use whichever verified name is available', async () => {
+    const unnamed = response();
+    unnamed.ServiceResponse.partnername = 'UNAVAILABLE';
+    assert.equal(parseBrassringHttpDetail(board, link(), 'Unknown Company', unnamed)?.company, 'Unknown Company');
+    assert.equal(parseBrassringHttpDetail(board, link(), 'Example Inc', unnamed)?.company, 'Example Inc');
+    for (const data of [unnamed, response()]) {
+        const f = fake({ html: bootstrap().replace('Example Inc', 'Unknown Company'), data });
+        const posting = await new BrassringHttpDetailReader(async () => {}, f.fetcher).detail(board, link());
+        assert.equal(posting?.company, data === unnamed ? 'Unknown Company' : 'Example Inc');
+        assert.equal(posting?.id, '42');
+        assert.ok(posting?.description.includes(description.trim()));
+        assert.equal(f.calls.length, 2);
+    }
 });
 test('invalid board and posting identities make no requests, and operator pause between bootstrap and POST propagates', async () => {
     const f = fake(), reader = new BrassringHttpDetailReader(async () => {}, f.fetcher);

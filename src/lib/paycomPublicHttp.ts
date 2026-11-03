@@ -43,8 +43,10 @@ export class PaycomPublicHttp {
         const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
         if (claims.sub !== '0' || claims.isInternalJobBoard !== '' || typeof claims.clientcode !== 'string') return null;
         const branding = await this.json('/api/ats/company-name', token);
-        if (typeof branding.companyName !== 'string' || branding.companyName.trim().length < 2 || branding.companyName.length > 200 || isPlaceholderEmployerName(branding.companyName)) return null;
-        const session: Session = { token, client: claims.clientcode, company: branding.companyName.trim() };
+        const name = branding.companyName;
+        const company = typeof name === 'string' && name.trim().length >= 2 && name.length <= 200 && !isPlaceholderEmployerName(name)
+            ? name.trim() : 'Unknown Company';
+        const session: Session = { token, client: claims.clientcode, company };
         if (this.sessions.size >= 8) this.sessions.clear();
         this.sessions.set(board, session);
         return session;

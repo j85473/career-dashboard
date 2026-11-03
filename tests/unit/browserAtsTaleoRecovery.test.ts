@@ -72,8 +72,8 @@ test('Taleo uses published copyright branding and the exact localized detail tit
     assert.equal(posting?.company, 'Mary Kay Inc.');
     assert.equal(posting?.title, 'Published Director Title');
     assert.equal(parseBrowserPosting('taleo', board, link, [{ ...doc, html: doc.html.replace('>42<', '>43<') }]), null);
-    assert.equal(parseBrowserPosting('taleo', board, link, [{ ...doc, html: doc.html.replace('<div id="footer">', '<div>') }]), null);
-    assert.equal(parseBrowserPosting('taleo', board, link, [{ ...doc, html: doc.html + '<footer>© Other Employer</footer>' }]), null);
+    assert.equal(parseBrowserPosting('taleo', board, link, [{ ...doc, html: doc.html.replace('<div id="footer">', '<div>') }])?.company, 'Unknown Company');
+    assert.equal(parseBrowserPosting('taleo', board, link, [{ ...doc, html: doc.html + '<footer>© Other Employer</footer>' }])?.company, 'Unknown Company');
 });
 test('a Taleo publisher outage defers immediately without interpreting it as an empty board', async () => {
     const doc = { url: () => board, content: async () => '<h1>Career Section Unavailable</h1>', locator: () => ({ innerText: async () => 'Career Section Unavailable' }) };

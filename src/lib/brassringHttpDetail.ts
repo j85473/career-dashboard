@@ -16,12 +16,13 @@ const text = (value: string) => cleanBrowserHtml(value).replace(/\s+/g, ' ').tri
 /** Only the publisher's exact job response can become a posting. Preserve every
  * displayed field, including requirements/pay/benefits outside the main JD. */
 export function parseBrassringHttpDetail(board: string, link: BrowserPostingLink, company: string, input: unknown): BrowserPosting | null {
-    if (browserAtsBoardFromUrl('brassring', board) !== board || browserPostingLink('brassring', board, link.url)?.id !== link.id || !usableCompany(company)) return null;
+    if (browserAtsBoardFromUrl('brassring', board) !== board || browserPostingLink('brassring', board, link.url)?.id !== link.id) return null;
     const root = input as { ServiceResponse?: { SolarErrorOccurred?: unknown; partnername?: unknown; Jobdetails?: {
         isActive?: unknown; Title?: unknown; Link?: unknown; JobSiteId?: unknown; JobDetailQuestions?: unknown;
     }; JobFieldsToDisplay?: { Summary?: unknown } } } | null;
     const response = root?.ServiceResponse, job = response?.Jobdetails, site = new URL(board).searchParams.get('siteid');
-    if (!response || response.SolarErrorOccurred !== false || !usableCompany(response.partnername) || companyKey(response.partnername) !== companyKey(company)
+    if (!response || response.SolarErrorOccurred !== false
+        || usableCompany(response.partnername) && usableCompany(company) && companyKey(response.partnername) !== companyKey(company)
         || !job || job.isActive !== true || typeof job.Link !== 'string' || browserPostingLink('brassring', board, job.Link)?.id !== link.id
         || job.JobSiteId != null && String(job.JobSiteId) !== site || typeof job.Title !== 'string' || !job.Title.trim()
         || !Array.isArray(job.JobDetailQuestions) || job.JobDetailQuestions.length > 100) return null;
@@ -46,7 +47,8 @@ export function parseBrassringHttpDetail(board: string, link: BrowserPostingLink
     const places = questions.filter(q => q.VerityZone.toLowerCase() === 'location'
         || /^(?:city|state(?:\s*\/\s*(?:region|province))*|country|work locations?|job locations?|locations?|store address|address(?: line \d+)?|zip(?: code)?|postal code)$/i.test(text(q.QuestionName)))
         .map(q => text(q.AnswerValue)).filter(Boolean);
-    return { ...link, title, company: company.trim(), description, location: [...new Set(places)].join('; ') };
+    const employer = usableCompany(response.partnername) ? response.partnername.trim() : usableCompany(company) ? company.trim() : 'Unknown Company';
+    return { ...link, title, company: employer, description, location: [...new Set(places)].join('; ') };
 }
 
 /** Anonymous sessions last only for this bounded board turn. They are never
@@ -87,8 +89,8 @@ export class BrassringHttpDetailReader {
             if ($('#partnerId').length !== 1 || $('#siteId').length !== 1 || $('#preLoadJSON').length !== 1
                 || $('#partnerId').attr('value') !== params.get('partnerid') || $('#siteId').attr('value') !== params.get('siteid')) return null;
             const model = JSON.parse($('#preLoadJSON').attr('value') || '') as { ClientSettings?: { PartnerName?: unknown } };
-            if (!usableCompany(model.ClientSettings?.PartnerName)) return null;
-            const session: Session = { company: model.ClientSettings.PartnerName.trim(), cookies: new Map() };
+            const name = model.ClientSettings?.PartnerName;
+            const session: Session = { company: usableCompany(name) ? name.trim() : 'Unknown Company', cookies: new Map() };
             this.updateCookies(session.cookies, result.response.headers);
             if (!session.cookies.size) return null;
             if (this.sessions.size >= 8) this.sessions.delete(this.sessions.keys().next().value!);

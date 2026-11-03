@@ -97,6 +97,21 @@ test('different posting identity, employer or short detail cannot pass the direc
     }
 });
 
+test('Paylocity missing branding retains the catalogue and details without weakening known employer conflicts', async () => {
+    const url = 'https://recruiting.paylocity.com/Recruiting/Jobs/Details/42';
+    const unnamed = catalogue(paylocityJobs(), { ModuleTitle: null }).replace('<title>Example Inc - Job Opportunities</title>', '<title>Job Opportunities</title>');
+    for (const [listingHtml, expected] of [[catalogue(), 'Example Inc'], [unnamed, 'Unknown Company']]) {
+        const f = httpFake({ [paylocity]: listingHtml, [url]: detail(url, 'UNAVAILABLE') });
+        const reader = new BrowserAtsHttpReader(async () => {}, f.fetcher);
+        assert.equal((await reader.page('paylocity', paylocity, 1))?.links.length, 2);
+        const posting = await reader.detail('paylocity', paylocity, browserPostingLink('paylocity', paylocity, url)!);
+        assert.equal(posting?.company, expected);
+        assert.equal(posting?.description, description.trim());
+    }
+    const f = httpFake({ [paylocity]: unnamed, [url]: detail(url, 'Verified Detail Employer') });
+    assert.equal((await new BrowserAtsHttpReader(async () => {}, f.fetcher).detail('paylocity', paylocity, browserPostingLink('paylocity', paylocity, url)!))?.company, 'Verified Detail Employer');
+});
+
 test('iCIMS follows the publisher next URL and requires its published final-page position', async () => {
     const start = icims + '&ss=1', next = icims + '&pr=1';
     const fake = httpFake({ [start]: icimsPage(1, 2, next), [next]: icimsPage(2, 2, undefined, [43]) });

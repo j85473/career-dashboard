@@ -4,13 +4,13 @@ import { PaycomPublicHttp, PAYCOM_HTTP_CATALOGUE_LIMIT } from '../../src/lib/pay
 import { advanceBrowserSweep, loadBrowserSweepPage, newBrowserSweep, readBrowserSweep } from '../../src/lib/browserAtsProgress';
 const board = 'https://www.paycomonline.net/v4/ats/web.php/portal/74B8425BF3D1B3ACB19CC1353DC5FA0E/career-page';
 type SearchResult = {jobPostingPreviewsCount:number;jobPostingPreviews:{jobId:number;jobTitle:string}[]};
-function fake(count = 317, mutate?: (result: SearchResult, skip:number, call:number) => void, check = async () => {}) {
+function fake(count = 317, mutate?: (result: SearchResult, skip:number, call:number) => void, check = async () => {}, companyName: unknown = 'Example Employer') {
     const calls: number[] = [];
     const token = 'x.' + Buffer.from(JSON.stringify({ sub:'0', isInternalJobBoard:'', clientcode:'EMP' })).toString('base64url') + '.x';
     const rows = Array.from({length:count}, (_, i) => ({ jobId:i + 1, jobTitle:'Manager ' + (i + 1) }));
     const reader = new PaycomPublicHttp(check, async (url, init) => {
         if (url === board) return new Response('var configsFromHost = ' + JSON.stringify({sessionJWT:token}) + ';');
-        if (url.endsWith('/company-name')) return Response.json({companyName:'Example Employer'});
+        if (url.endsWith('/company-name')) return Response.json({companyName});
         if (url.endsWith('/search')) {
             const body = JSON.parse(String(init.body));
             assert.equal(body.take, 50); assert.equal(body.filtersForQuery.keywordSearchText, '');
@@ -42,6 +42,18 @@ test('Paycom enumerates larger catalogues and resumes a durable queue without re
     assert.equal(advanceBrowserSweep(progress), null);
     for (const patch of [{transport:'browser-v1'}, {total:316}, {next:{kind:'click'}}, {page:2}])
         assert.throws(()=>readBrowserSweep({...progress,...patch}, 'paycom',board), /Invalid durable/);
+});
+
+test('Paycom missing branding does not block catalogue acquisition or exact job details', async () => {
+    for (const company of [null, '', 'UNAVAILABLE']) {
+        const { reader } = fake(2, undefined, undefined, company);
+        const page = await reader.page(board, 1);
+        assert.equal(page?.links.length, 2);
+        const posting = await reader.detail(board, page!.links[0], page!.links);
+        assert.equal(posting?.company, 'Unknown Company');
+        assert.equal(posting?.id, '1');
+        assert.match(posting!.description, /Published full responsibilities/);
+    }
 });
 
 test('Paycom refuses count drift, duplicate pages, missing rows, head movement and oversized catalogues', async () => {

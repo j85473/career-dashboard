@@ -68,6 +68,20 @@ test('ADP explicit configuration names take precedence and avoid a corporate loo
     assert.equal(calls.length, 2);
 });
 
+test('ADP retains unnamed exact postings and completes the saved catalogue', async () => {
+    const { reader } = harness({ total: 2, jobs: [job('42'), job('43')], center: center([]) });
+    const progress = loadBrowserSweepPage(newBrowserSweep(board), await reader.listing(1));
+    for (const postingLink of progress.queue) {
+        const posting = await reader.detail(postingLink);
+        assert.equal(posting.company, 'Unknown Company');
+        assert.equal(posting.description, description.trim());
+        assert.equal(posting.id, postingLink.id);
+        progress.seen.push(posting.id);
+        progress.offset++;
+    }
+    assert.equal(advanceBrowserSweep(progress), null);
+});
+
 test('ADP accepts a plain corporate homepage title only when the exact JD independently names it', async () => {
     const { reader } = harness({ siteHtml: '<title>Corning Credit Union</title>',
         description: '<p>Corning Credit Union is seeking a bilingual loan officer.</p>' + description });
@@ -75,7 +89,7 @@ test('ADP accepts a plain corporate homepage title only when the exact JD indepe
     for (const options of [{ description }, { description: 'Other Corning Credit Unions are unrelated. ' + description },
         { description: 'We offer employee discounts at Corning Credit Union. ' + description },
         { description: 'Corning Credit Union is hiring. ' + description, siteLanded: 'https://other.example/' }])
-        await assert.rejects(harness({ siteHtml: '<title>Corning Credit Union</title>', ...options }).reader.detail(link()), /employer is unverified/);
+        assert.equal((await harness({ siteHtml: '<title>Corning Credit Union</title>', ...options }).reader.detail(link())).company, 'Unknown Company');
     assert.equal(adpEmployerWebsite(center([site + 'culture/', site, site + 'careers/'])), site);
 });
 
@@ -86,8 +100,8 @@ test('ADP never invents a company from a tenant, social link, conflicting websit
     for (const options of [{ center: center([]) }, { siteHtml: '<title>Welcome to our website</title>' },
         { siteLanded: 'https://other.example/' }]) {
         const { reader, calls } = harness(options);
-        await assert.rejects(reader.detail(link()), /employer is unverified/);
-        await assert.rejects(reader.detail(link('43')), /employer is unverified/);
+        assert.equal((await reader.detail(link())).company, 'Unknown Company');
+        assert.equal((await reader.detail(link('43'))).company, 'Unknown Company');
         assert.equal(calls.filter(url => url.includes('career-center')).length, 1, 'negative metadata is shared too');
         assert.equal(calls.filter(url => url === site).length, options.center ? 0 : 1);
     }

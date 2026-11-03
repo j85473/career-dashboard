@@ -16,7 +16,7 @@ test('Detail matches requisition identity across iframe/canonical slug variants,
     const doc = { url: 'https://careers-example.icims.com/jobs/42/job?in_iframe=1', html: html(link.url), text: description };
     assert.equal(parseBrowserPosting('icims', board, link, [doc])?.company, 'Example Inc');
     assert.equal(parseBrowserPosting('icims', board, link, [{ ...doc, html: html('https://careers-example.icims.com/jobs/43/other/job') }]), null);
-    assert.equal(parseBrowserPosting('icims', board, link, [{ ...doc, html: html(link.url, 'Unknown') }]), null);
+    assert.equal(parseBrowserPosting('icims', board, link, [{ ...doc, html: html(link.url, 'Unknown') }])?.company, 'Unknown Company');
 });
 test('Tenant and posting identities reject off-host links and distinguish duplicate vendor requisition numbers', () => {
     assert.equal(browserPostingLink('icims', board, 'https://elsewhere.icims.com/jobs/42/job'), null);
