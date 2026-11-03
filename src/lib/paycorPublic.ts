@@ -52,7 +52,13 @@ export function parsePaycorPosting(board: string, link: BrowserPostingLink, docs
     for (const doc of docs) {
         if (paycorPostingLink(board, doc.url)?.id !== link.id) continue;
         const $ = cheerio.load(doc.html);
-        if ($('#gnewtonJobDescription').length !== 1 || $('#gnewtonJobDescriptionText').length !== 1) continue;
+        // Employers sometimes paste a previous Paycor page into the JD. Its
+        // nested duplicate IDs belong to the description, not the outer job.
+        const containers = $('#gnewtonJobDescription').filter((_, node) => !$(node).parents('#gnewtonJobDescription').length);
+        const descriptions = containers.find('#gnewtonJobDescriptionText').filter((_, node) => !$(node).parents('#gnewtonJobDescriptionText').length);
+        const positions = containers.find('#gnewtonJobPosition').filter((_, node) => !$(node).parents('#gnewtonJobDescriptionText').length);
+        const locations = containers.find('#gnewtonJobLocationInfo').filter((_, node) => !$(node).parents('#gnewtonJobDescriptionText').length);
+        if (containers.length !== 1 || descriptions.length !== 1 || positions.length !== 1 || locations.length > 1) continue;
         const application = $('#gravityApplyJob[action]');
         try {
             if (application.length !== 1) continue;
@@ -61,10 +67,10 @@ export function parsePaycorPosting(board: string, link: BrowserPostingLink, docs
             target.pathname = '/career/JobIntroduction.action';
             if (paycorPostingLink(board, target.href)?.id !== link.id) continue;
         } catch { continue; }
-        const title = normalized($('#gnewtonJobPosition').text()).replace(/^Position:\s*/i, '');
-        const description = cleanBrowserHtml($('#gnewtonJobDescriptionText').html() || '');
+        const title = normalized(positions.text()).replace(/^Position:\s*/i, '');
+        const description = cleanBrowserHtml(descriptions.html() || '');
         if (!title || description.length < 200) continue;
-        const location = cleanBrowserHtml($('#gnewtonJobLocationInfo').html() || '').split(/\n+/).map(normalized).filter(Boolean).join('; ');
+        const location = cleanBrowserHtml(locations.html() || '').split(/\n+/).map(normalized).filter(Boolean).join('; ');
         return { ...link, title, titleVerified: true, company: publishedCompany($), description, location };
     }
     return null;

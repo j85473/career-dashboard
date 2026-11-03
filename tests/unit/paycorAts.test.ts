@@ -116,3 +116,16 @@ test('refusal, filtered redirects and shells hand off without claiming completio
         assert.equal(publicCrawlLaneAllows('paycor', 'browser', { status: 'partial', progress }), true);
     }
 });
+
+
+test('a Paycor template pasted inside the JD cannot override outer metadata or reject its full description', () => {
+    const nested = `<table id="gnewtonJobDescription"><tr><td id="gnewtonJobPosition">Position: Old copied title</td></tr><tr><td id="gnewtonJobLocationInfo">Old copied place</td></tr><tr><td id="gnewtonJobDescriptionText">${body}</td></tr></table>`;
+    const html = detail().replace(`<p>${body}</p>`, `<p>Current role introduction.</p>${nested}`);
+    const posting = parseBrowserPosting('paycor', board, link, [doc(html, url)])!;
+    assert.equal(posting.title, 'Channel Manager');
+    assert.equal(posting.location, 'Minneapolis, MN; Madison, WI');
+    assert.ok(posting.description.includes('Current role introduction.'));
+    assert.ok(posting.description.includes(body.trim()));
+    const ambiguous = detail().replace('</form>', `<table id="gnewtonJobDescription"><tr><td id="gnewtonJobDescriptionText">${body}</td></tr></table></form>`);
+    assert.equal(parseBrowserPosting('paycor', board, link, [doc(ambiguous, url)]), null);
+});
