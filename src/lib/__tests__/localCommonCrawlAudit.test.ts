@@ -131,3 +131,28 @@ test('low scratch space stops before downloading, saving, deleting or earning a 
   assert.deepEqual(h.read, []); assert.deepEqual(h.removed, []); assert.deepEqual(h.receipts(), []);
   assert.equal(h.scan().nextBlock, 0);
 });
+
+test('new provider discovery inherits exact finished coverage without resetting or overwriting current receipts', async () => {
+  const { inheritLocalCrawlCoverage } = await import('../localCommonCrawlAudit');
+  const old = { platform: 'greenhouse', pattern, indexId, pagesRead: 8, recordsRead: 400, candidatesQueued: 12, completedAt: new Date(0) };
+  let selection: unknown, write: unknown;
+  const client = { atsDiscoveryAuditIndexReceipt: {
+    findMany: async (query: unknown) => { selection = query; return [old]; },
+    createMany: async (query: unknown) => { write = query; return { count: 1 }; },
+  } } as unknown as PrismaClient;
+  const patterns = [{ platform: 'greenhouse', pattern }, { platform: 'paycor', pattern: 'recruitingbypaycor.com/career/*' }];
+  await inheritLocalCrawlCoverage(client, 'new-run', indexId, patterns);
+  assert.deepEqual(selection, { where: { indexId, runId: { not: 'new-run' }, run: { status: { in: ['complete', 'complete_with_unresolved'] } }, OR: patterns },
+    distinct: ['platform', 'pattern'], orderBy: { completedAt: 'desc' },
+    select: { platform: true, pattern: true, indexId: true, pagesRead: true, recordsRead: true, candidatesQueued: true, completedAt: true } });
+  assert.deepEqual(write, { data: [{ ...old, runId: 'new-run' }], skipDuplicates: true });
+});
+
+test('recent Common Crawl indexes run first while an in-flight download retains priority and scope', async () => {
+  const { localAuditIndexOrder } = await import('../../../scripts/audit_ats_common_crawl');
+  const indices = ['old', 'middle', 'new'];
+  assert.deepEqual(localAuditIndexOrder(indices, []), ['new', 'middle', 'old']);
+  assert.deepEqual(localAuditIndexOrder(indices, ['middle']), ['middle', 'new', 'old']);
+  assert.deepEqual(indices, ['old', 'middle', 'new']);
+  assert.throws(() => localAuditIndexOrder(indices, ['outside']), /outside its audit/);
+});

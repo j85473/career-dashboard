@@ -200,13 +200,14 @@ test('moving Gusto retains task identity, saved work, due date and history witho
   assert.equal(writes.length, 1);
 });
 
-test('board collection telemetry covers all fifteen families and refuses expired working claims', async () => {
+test('board collection telemetry covers every configured family and refuses expired working claims', async () => {
   const now = new Date('2026-10-17T23:00:00Z');
   const client = {
     $queryRaw: async () => [{ dueBoards: 3000, sweptToday: 200 }],
     ingestionTask: { findMany: async (input: { where: { ingestionMode: string; source: { in: string[] } } }) => {
     assert.equal(input.where.ingestionMode, 'public-board');
-    assert.equal(input.where.source.in.length, 15);
+    assert.equal(input.where.source.in.length, NON_API_ATS_PLATFORMS.length);
+    assert.ok(input.where.source.in.includes('ATS-paycor'));
     assert.ok(input.where.source.in.includes('Gusto'));
     return [
       { source: 'Gusto', status: 'running', leaseToken: 'live', leaseExpiresAt: new Date(now.getTime() + 60000) },

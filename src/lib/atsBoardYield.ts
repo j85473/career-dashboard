@@ -1,3 +1,4 @@
+import { browserAtsBoardFromUrl } from './browserAtsBoards';
 import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl } from './publicAtsBoards';
 import { eightfoldBoardSlugFromUrl } from './eightfoldBoard';
 import { greenhousePostingUrl } from './coreAtsPostingUrl';
@@ -85,6 +86,7 @@ export function boardSlugFromJobUrl(
 ): string | null {
   const raw = String(url || '').trim();
   if (!raw) return null;
+  if (platform === 'paycor') return browserAtsBoardFromUrl(platform, raw);
   let parsed: URL;
   try {
     parsed = new URL(raw);

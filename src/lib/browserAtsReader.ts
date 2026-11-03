@@ -1,3 +1,4 @@
+import { paycorPublicListing, PAYCOR_CATALOGUE_LIMIT } from './paycorPublic';
 import { icimsPublicListing } from './icimsPublicListing';
 import { assertPublicBoardAvailable } from './publicBoardAvailability';
 import { AdpPublicReader } from './adpPublicReader';
@@ -137,13 +138,14 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
         }
         catch { /* Ignore malformed anchors, never the valid postings beside them. */ } });
     }
-    if (result.size > 250)
-        throw Error('Board page exceeds the 250-posting page limit; retaining it for review');
+    if (result.size > (platform === 'paycor' ? PAYCOR_CATALOGUE_LIMIT : 250))
+        throw Error('Board page exceeds its posting limit; retaining it for review');
     return [...result.values()];
 }
 export function verifiedEmptyBoard(platform: BrowserAtsPlatform, docs: BrowserDocument[], board?: string): boolean {
     return docs.some(doc => {
         if (board && browserAtsBoardFromUrl(platform, doc.url) !== board) return false;
+        if (platform === 'paycor' && board) return paycorPublicListing(doc, board)?.emptyVerified === true;
         if (platform === 'icims' && board) return icimsPublicListing(doc, board, 1)?.emptyVerified === true;
         const $ = cheerio.load(doc.html);
         if (platform === 'freshteam') {
@@ -501,6 +503,12 @@ export class BrowserAtsReader {
         if (platform === 'icims') {
             const verified = docs.map(doc => icimsPublicListing(doc, board, pageNumber)).find(Boolean);
             if (verified) { this.position = { platform, board, page: pageNumber }; return verified; }
+        }
+        if (platform === 'paycor') {
+            const verified = pageNumber === 1 ? docs.map(doc => paycorPublicListing(doc, board)).find(Boolean) : null;
+            if (!verified) throw Error('Paycor catalogue incomplete or filtered; retaining sweep for retry');
+            this.position = { platform, board, page: pageNumber };
+            return verified;
         }
         const links = postingLinksFromDocuments(platform, board, docs);
         const total = listingTotal(docs.map(d => d.text).join('\n'));

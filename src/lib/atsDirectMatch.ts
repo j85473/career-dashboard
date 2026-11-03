@@ -1,3 +1,4 @@
+import { browserAtsBoardFromUrl } from './browserAtsBoards';
 import { tenantAtsIdentityFromUrl } from './tenantAtsBoards';
 import { recruiteePostingLocation } from './recruiteeLocation';
 /**
@@ -116,6 +117,8 @@ export function boardIdentityFromUrl(url: string | null | undefined): BoardIdent
     return null;
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+  const paycor = browserAtsBoardFromUrl('paycor', value);
+  if (paycor) return { platform: 'paycor', slug: paycor };
   const tenant = tenantAtsIdentityFromUrl(value);
   if (tenant) return tenant;
   const zoho = zohoRecruitBoardSlugFromUrl(value);

@@ -145,6 +145,21 @@ export async function consumeLocalCrawlScan(client: PrismaClient, initial: AtsDi
   return dependencies.finish(client, scan);
 }
 
+/** Reuse exact source exhaustion from finished audits, without downloading old
+ * provider ranges again when a new ATS family is added. Saved scans finish first. */
+export async function inheritLocalCrawlCoverage(client: PrismaClient, runId: string, indexId: string,
+  patterns: LocalCrawlPattern[]): Promise<void> {
+  const previous = await client.atsDiscoveryAuditIndexReceipt.findMany({
+    where: { indexId, runId: { not: runId }, run: { status: { in: ['complete', 'complete_with_unresolved'] } },
+      OR: patterns.map(({ platform, pattern }) => ({ platform, pattern })) },
+    distinct: ['platform', 'pattern'], orderBy: { completedAt: 'desc' },
+    select: { platform: true, pattern: true, indexId: true, pagesRead: true, recordsRead: true, candidatesQueued: true, completedAt: true },
+  });
+  if (previous.length) await client.atsDiscoveryAuditIndexReceipt.createMany({
+    data: previous.map(receipt => ({ ...receipt, runId })), skipDuplicates: true,
+  });
+}
+
 /** Finish one immutable plan before considering newly added URL patterns. */
 export async function scanLocalCrawl(client: PrismaClient, runId: string, indexId: string,
   patterns: LocalCrawlPattern[], config: LocalCrawlConfig, afterBlock: () => Promise<unknown>): Promise<void> {
@@ -153,6 +168,7 @@ export async function scanLocalCrawl(client: PrismaClient, runId: string, indexI
     for (const saved of completed) await cleanupCommittedBlocks(config, saved);
     let scan = await client.atsDiscoveryLocalScan.findFirst({ where: { runId, indexId, status: 'running' }, orderBy: { createdAt: 'asc' } });
     if (!scan) {
+      await inheritLocalCrawlCoverage(client, runId, indexId, patterns);
       const receipts = await client.atsDiscoveryAuditIndexReceipt.findMany({ where: { runId, indexId }, select: { platform: true, pattern: true } });
       const covered = new Set(receipts.map(p => JSON.stringify([p.platform, p.pattern])));
       const missing = patterns.filter(p => !covered.has(JSON.stringify([p.platform, p.pattern])));
