@@ -227,6 +227,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
+  const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const runningStatusRows = pipelineStatusRows(pipelineState?.stepProgress);
   const [approvalToken, setApprovalToken] = useState<string | null>(null);
@@ -598,6 +599,31 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   };
 
 
+  const retryFailure = async (jobId: string, stage: 'jd' | 'experience') => {
+    setRetryingJobId(jobId);
+    try {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry-failure`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not retry this failure.');
+      await fetchJobs(1, false, true);
+      window.dispatchEvent(new CustomEvent('pipelineStatusRefresh'));
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Could not retry this failure.');
+    } finally { setRetryingJobId(null); }
+  };
+
+  const recoveryRow = (job: JobListItem, stage?: 'jd' | 'experience') => (
+    <div key={job.id} className="log-recovery-row">
+      {row(job, <em>{job.scoreError || 'The previous attempt did not complete.'}</em>)}
+      {stage && job.status === 'pending_af' && !job.tailoringStaged && <button className="btn"
+        disabled={retryingJobId !== null} onClick={() => retryFailure(job.id, stage)}>
+        {retryingJobId === job.id ? 'Returning to queue…' : stage === 'jd' ? 'Retry description' : 'Retry Experience'}
+      </button>}
+    </div>
+  );
+
   const row = (job: JobListItem, detail?: React.ReactNode) => (
     <button key={job.id} type="button" className="log-job-row" onClick={() => onSelectJob?.(job)}>
       <span>
@@ -618,13 +644,9 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs stopped before Aim or Experience scoring.</p>
             </div>
           </section>
-          <p className="log-help">JD recovery failures and bounded pre-scoring exceptions stay here. Confirmed closed postings move to Expired, and untouched failures are automatically dismissed after 10 days.</p>
+          <p className="log-help">Retry description starts another bounded extraction attempt for that job. It does not change completed scores. Some sources publish only a short snippet; those jobs may still need the full description pasted into their card. Confirmed closed postings move to Expired, and untouched failures are automatically dismissed after 10 days.</p>
           <div className="log-list">
-            {jobs.length ? jobs.map((job) => row(job, (
-              <em>
-                {job.scoreError || `${job.scoringStatus || 'unknown state'} · ${job.scoreAttempts || 0} attempts`}
-              </em>
-            ))) : <div className="empty-state">No active JD failures.</div>}
+            {jobs.length ? jobs.map((job) => recoveryRow(job, 'jd')) : <div className="empty-state">No active JD failures.</div>}
           </div>
         </div>
       );
@@ -639,11 +661,11 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs have a technical scoring failure.</p>
             </div>
           </section>
-          <p className="log-help">Only safe failures and other missing Aim or Experience AI results stay here. Jobs with a valid score below the advancement threshold do not appear in this queue. Untouched failures are automatically dismissed after 10 days.</p>
+          <p className="log-help">Retry Experience returns an unfinished attempt to Experience Ready for your next export. The completed Aim result stays saved. Jobs with a valid score below the advancement threshold do not appear here. Untouched failures are automatically dismissed after 10 days.</p>
           <div className="log-list">
-            {jobs.length ? jobs.map((job) => row(job, (
-              <em>{job.scoreError || 'Aim Fit could not produce a usable score for the current job input.'}</em>
-            ))) : <div className="empty-state">No active scoring failures.</div>}
+            {jobs.length ? jobs.map((job) => recoveryRow(job,
+              job.scoreError?.startsWith('Experience Fit could not score this job:') ? 'experience' : undefined,
+            )) : <div className="empty-state">No active scoring failures.</div>}
           </div>
         </div>
       );

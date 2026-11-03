@@ -5,6 +5,7 @@ import { firstCollectionRetryAt } from './atsFirstCollectionRetry';
 import { isTenantAtsServiceAddress } from './tenantAtsBoards';
 import { FIRST_COLLECTION_POLICY_ID, FIRST_COLLECTION_HEALTH_WINDOW_MS, FIRST_COLLECTION_PLATFORMS,
   firstCollectionHealth, firstCollectionAllowance, firstCollectionCounts, reconcileFirstCollectionCompletion } from './atsFirstCollectionAdmission';
+import { catalogueMissingFirstCollectionCandidates } from './atsFirstCollectionAdmission';
 
 export type FirstCollectionValidation = { success: boolean; jobsFound?: number; reason?: string; sizeReview?: boolean };
 export function nextFirstCollectionHealthySince(input: {
@@ -45,6 +46,7 @@ export async function tickFirstCollections(validate: (platform: string, slug: st
     // Capacity mode keeps multiple validated feeds available to the shared workers.
     if (capacity ? ready + counts.unfinished >= policy.maxUnfinished : ready > 0) return null;
     if (!capacity && await tx.atsFirstCollectionCandidate.count({ where: { lastValidationStartedAt: { gt: windowStart } } }) >= policy.dailyBoardLimit) return null;
+    await catalogueMissingFirstCollectionCandidates(tx);
     const pilots = Array.isArray(policy.pilotBoards) ? policy.pilotBoards.filter((value): value is string => typeof value === 'string').map(value => {
       const split = value.indexOf('::'); return { platform: value.slice(0, split), slug: value.slice(split + 2) };
     }) : [];

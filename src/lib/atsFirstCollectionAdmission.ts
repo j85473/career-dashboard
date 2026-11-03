@@ -20,6 +20,32 @@ export async function catalogueFirstCollectionCandidate(client: Pick<Client, 'at
   });
 }
 
+/** Older discoveries can be waiting without ever entering validation. Restore
+ * that missing handoff only; attempts, holds and acquired work keep authority. */
+export async function catalogueMissingFirstCollectionCandidates(client: Pick<Client, '$executeRaw'>): Promise<void> {
+  await client.$executeRaw(Prisma.sql`
+    INSERT INTO "AtsFirstCollectionCandidate" (slug, platform, state, "nextValidationAt", "createdAt", "updatedAt")
+    SELECT board.slug, board.platform, 'discovered', CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+      board."discoveredAt", CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+    FROM "AtsCompany" board
+    WHERE board.platform IN (${Prisma.join([...FIRST_COLLECTION_PLATFORMS])})
+      AND board.status='active' AND board."firstCollectionState"='waiting'
+      AND board."firstCollectionHoldReason" IS NULL AND board."firstCollectionBatchId" IS NULL
+      AND board."excludedAt" IS NULL AND board."excludedReason" IS NULL
+      AND board."failCount"=0 AND board."retryCount"=0
+      AND board."lastAttemptedAt" IS NULL AND board."lastRespondedAt" IS NULL
+      AND board."lastCheckedAt" IS NULL AND board."lastSynchronizedAt" IS NULL AND board."lastProcessedAt" IS NULL
+      AND board."nextCheckDate" <= CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+      AND NOT EXISTS (SELECT 1 FROM "AtsFirstCollectionCandidate" c WHERE c.slug=board.slug AND c.platform=board.platform)
+      AND NOT EXISTS (SELECT 1 FROM "AtsIngestionBatch" b WHERE b.slug=board.slug AND b.platform=board.platform)
+      AND NOT EXISTS (SELECT 1 FROM "AtsBoardCheckAttempt" a WHERE a.slug=board.slug AND a.platform=board.platform)
+      AND NOT EXISTS (SELECT 1 FROM "AtsEndpointSweepReceipt" s WHERE s.slug=board.slug AND s.platform=board.platform)
+    ORDER BY board."discoveredAt", board.platform, board.slug
+    LIMIT 100
+    ON CONFLICT (slug, platform) DO NOTHING
+  `);
+}
+
 /** Successful persistence, not listing completion, earns normal rotation. */
 export async function reconcileFirstCollectionCompletion(client: Pick<Client, '$executeRaw'>): Promise<void> {
   await client.$executeRaw`

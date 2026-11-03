@@ -89,6 +89,27 @@ unavailable-board retry policy without opening a browser for the same page.
 Individual posting failures, access refusals and foreign or filtered redirects
 keep their existing fallback behavior. No existing board dates are bulk-edited.
 
+### Failed-job recovery and missing validation handoffs (November 3, 2026)
+
+The JD Failed list offers a per-job **Retry description** action. It starts
+another bounded extraction series only for an unscored, unleased pending job.
+The Scoring Failed list offers **Retry Experience** for an unfinished Experience
+attempt: the saved Aim result and its source bindings remain authoritative, and
+the job returns to Experience Ready for the operator's next manual export.
+This action does not invoke a model. Completed Experience results, staged work,
+final human lifecycle decisions, active batch leases and changed Aim inputs
+prevent recovery. Each successful action records the prior failure in history.
+No failure is automatically requeued or removed by installing this change.
+
+When first-collection policy and capacity permit validation, the controller
+also fills at most 100 missing validation entries for overdue active boards
+still waiting for their first collection. Every contact timestamp must be
+empty, with no hold, failure, candidate, attempt, batch or sweep. Existing
+validation entries and retry schedules are preserved; recovered entries use
+the ordinary validator and its size, pacing, pilot and capacity limits.
+Downloaded work awaiting employer evidence remains held and visible. This
+repair does not count incomplete collection as successful coverage.
+
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 
 ### Reconciling the four-day API rotation
