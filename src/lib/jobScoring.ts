@@ -28,7 +28,7 @@ import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
 import { LOCAL_SCORING_TERMINAL_ATTEMPTS } from './localScoringPolicy';
 import { filterNewCustomerSuccessRole } from './newCustomerSuccessExclusion';
-import { employerTriageVerdict, localTriageVerdict, titleTriageVerdict } from './localTriage';
+import { explicitLocalExclusionVerdict, localTriageVerdict, titleTriageVerdict } from './localTriage';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate, CLOSED_POSTING_REASON } from './jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from './ingestionSourceKind';
@@ -864,11 +864,11 @@ export async function scoreJobs(
         continue;
       }
 
-      // Joseph's explicit employer exclusions are independent of JD quality.
+      // Joseph's explicit employer and role exclusions are independent of JD quality.
       // Check every source here so an aggregator with a thin description cannot
       // spend recovery requests or enter JD Failed before the employer is rejected.
-      const employerVerdict = employerTriageVerdict(scoringJob.company);
-      if (!employerVerdict.pass && !lifecycleProtected) {
+      const exclusionVerdict = explicitLocalExclusionVerdict(scoringJob);
+      if (!exclusionVerdict.pass && !lifecycleProtected) {
         const updateResult = await updateLocalJobWithInvariant({
           where: claimedJobSnapshot(claimedJob, leaseId),
           data: {
@@ -877,7 +877,7 @@ export async function scoreJobs(
             location: scoringJob.location,
             scoringStatus: 'skipped',
             status: 'dismissed',
-            passReason: `Locally triaged out: ${employerVerdict.reason}`,
+            passReason: `Locally triaged out: ${exclusionVerdict.reason}`,
             batchJobId: null,
             scoreAttempts: 0,
             scoreError: null,
@@ -887,7 +887,7 @@ export async function scoreJobs(
           await releaseLocalScoringLease(job.id, leaseId);
           continue;
         }
-        if (onProgress) onProgress(`Locally filtered ${scoringJob.company}: ${employerVerdict.reason}`);
+        if (onProgress) onProgress(`Locally filtered ${scoringJob.company}: ${exclusionVerdict.reason}`);
         scoredCount++;
         continue;
       }

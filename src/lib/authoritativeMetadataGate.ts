@@ -1,7 +1,7 @@
 import { isAcostaChannelSalesPriorityRole } from './priorityOpportunity';
 import { isStructuredAtsSource } from './jobDescriptionQuality';
 import { passesPreFilter } from './jobFiltering';
-import { employerTriageVerdict, localTriageVerdict } from './localTriage';
+import { explicitLocalExclusionVerdict, localTriageVerdict } from './localTriage';
 import { splitLocationOptions } from './jobLocationPolicy';
 import { isCleanUSCityStateShape, isWorkdayLocationsPlaceholder, parseWorkdayLocationFromPath } from './workdayLocation';
 
@@ -131,8 +131,8 @@ export function evaluateAuthoritativeMetadata(job: {
   url?: string | null;
 }): MetadataGateVerdict {
   if (isAcostaChannelSalesPriorityRole(job)) return PASSES;
-  const employer = employerTriageVerdict(job.company);
-  if (!employer.pass) return { passes: false, reason: `Locally triaged out: ${employer.reason}` };
+  const exclusion = explicitLocalExclusionVerdict(job);
+  if (!exclusion.pass) return { passes: false, reason: `Locally triaged out: ${exclusion.reason}` };
 
   const prefilter = passesPreFilter({
     title: job.title || '',

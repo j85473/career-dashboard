@@ -19,6 +19,35 @@ test('an uncapped role passes title triage', () => {
   assert.match(verdict.reason, /discovery metadata only/);
 });
 
+test('AutoZone Part and Parts Sales Manager postings are excluded regardless of location or schedule', () => {
+  for (const title of [
+    'Part Sales Manager – Full Time', // Job 914e1f2c-36d6-4465-8284-f48d462e6887.
+    'Part Sales Manager - Part Time',
+    'Parts Sales Manager',
+    'PARTS  SALES MANAGER - Minneapolis',
+  ]) {
+    for (const location of ['Anoka, MN', 'Minneapolis, MN', 'Remote', 'Austin, TX', '', null]) {
+      const verdict = localTriageVerdict({ company: 'AutoZone', title, location, capRationale: '' });
+      assert.deepEqual(verdict, {
+        pass: false,
+        reason: 'Role excluded from local scoring (AutoZone Parts Sales Manager)',
+      }, `${title}: ${location}`);
+    }
+  }
+});
+
+test('the AutoZone role exclusion handles employer formatting without excluding other roles or employers', () => {
+  for (const company of ['AutoZone', ' AUTOZONE ', 'Auto Zone', 'AutoZone, Inc.', 'AutoZone Stores LLC']) {
+    assert.equal(localTriageVerdict({ company, title: 'Parts Sales Manager', capRationale: '' }).pass, false, company);
+  }
+  for (const company of ['Acme', 'AutoZone Consulting Partners', 'Agency serving AutoZone', '', null]) {
+    assert.equal(localTriageVerdict({ company, title: 'Parts Sales Manager', capRationale: '' }).pass, true, String(company));
+  }
+  for (const title of ['Commercial Sales Manager', 'Territory Sales Manager', 'Regional Sales Manager', '', null]) {
+    assert.equal(localTriageVerdict({ company: 'AutoZone', title, capRationale: '' }).pass, true, String(title));
+  }
+});
+
 test('2020 Companies is excluded by exact known employer aliases', () => {
   for (const company of ['2020 Companies', '  2020   Companies, Inc.  ', '2020companies.wd1']) {
     const verdict = employerTriageVerdict(company);

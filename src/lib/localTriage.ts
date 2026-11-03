@@ -211,6 +211,27 @@ export function employerTriageVerdict(company: string | null | undefined): Local
     : PASS;
 }
 
+const AUTOZONE_EMPLOYER_ALIASES = new Set([
+  'autozone', 'auto zone', 'autozone inc', 'autozone inc.',
+  'autozone, inc', 'autozone, inc.', 'autozone stores', 'autozone stores llc',
+]);
+
+/** Explicit employer and role exclusions apply before recovery, regardless of location. */
+export function explicitLocalExclusionVerdict(input: {
+  company?: string | null;
+  title?: string | null;
+}): LocalTriageVerdict {
+  const employer = employerTriageVerdict(input.company);
+  if (!employer.pass) return employer;
+  // The referenced Oracle posting uses singular "Part Sales Manager"; both
+  // spellings and schedule/location suffixes identify the excluded role.
+  if (AUTOZONE_EMPLOYER_ALIASES.has(normalizedEmployerName(input.company))
+    && /\bparts?\s+sales\s+manager\b/i.test(input.title || '')) {
+    return { pass: false, reason: 'Role excluded from local scoring (AutoZone Parts Sales Manager)' };
+  }
+  return PASS;
+}
+
 /**
  * The heuristic caps a score below triage when the role has no target sales,
  * account management, partnerships or customer success title signal, or when it
@@ -344,7 +365,7 @@ export function titleGeographyVerdict(title: string | null | undefined): LocalTr
 }
 
 /**
- * Combined verdict. An explicit employer preference runs first; title triage
+ * Combined verdict. Explicit employer and role preferences run first; title triage
  * then remains ahead of geography, so its reason is recorded when both reject.
  */
 export function localTriageVerdict(input: {
@@ -353,8 +374,8 @@ export function localTriageVerdict(input: {
   title?: string | null;
   location?: string | null;
 }): LocalTriageVerdict {
-  const employer = employerTriageVerdict(input.company);
-  if (!employer.pass) return employer;
+  const exclusion = explicitLocalExclusionVerdict(input);
+  if (!exclusion.pass) return exclusion;
   if (!LOCAL_TRIAGE_ENABLED) return PASS;
   const title = titleTriageVerdict(input.capRationale);
   if (!title.pass) return title;

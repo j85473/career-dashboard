@@ -93,6 +93,19 @@ test('an explicitly excluded employer is dismissed before direct-board JD recove
   assert.equal(verdict.reason, 'Locally triaged out: Employer excluded from local scoring (2020 Companies)');
 });
 
+test('AutoZone Parts Sales Manager is excluded before JD recovery even in the local metro', () => {
+  for (const title of ['Part Sales Manager – Full Time', 'Parts Sales Manager - Part Time']) {
+    const verdict = metadataGate({ company: 'AutoZone', title, location: 'Anoka, MN' });
+    assert.deepEqual(verdict, {
+      passes: false,
+      reason: 'Locally triaged out: Role excluded from local scoring (AutoZone Parts Sales Manager)',
+    });
+  }
+  assert.equal(metadataGate({
+    company: 'AutoZone', title: 'Commercial Sales Manager', location: 'Anoka, MN',
+  }).passes, true);
+});
+
 test('AO Garcia Agency Lever postings are excluded before JD recovery or AI review', () => {
   const verdict = metadataGate({
     title: 'Channel Account Manager',
