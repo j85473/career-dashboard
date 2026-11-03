@@ -42,6 +42,14 @@ def worker_receipt(effort: str) -> dict[str, object]:
 
 
 class AimRunnerV2Tests(unittest.TestCase):
+    def test_fixture_exports_only_public_posting_details(self) -> None:
+        details = {"company": "Example", "title": "Channel Manager", "location": "Remote"}
+        exported, _ = make_aim_v2_export(REPO_ROOT, posting_details=[{
+            **details, "internal_note": "synthetic value that must not be exported",
+        }])
+        self.assertEqual(exported["jobs"][0]["trustedMetadata"], details)
+        self.assertNotIn("synthetic value", json.dumps(exported))
+
     def test_holistic_stage2_parser_requires_score_first_and_a_bounded_rationale(self) -> None:
         self.assertEqual(
             parse_holistic_stage2_output("Aim Fit Score: 100\nStrong channel ownership and travel alignment."),
@@ -223,7 +231,7 @@ class AimRunnerV2Tests(unittest.TestCase):
         ]
         for name, source, location, answer, excerpts in cases:
             with self.subTest(case=name):
-                exported, _ = make_aim_v2_export(REPO_ROOT, sources=[source], trusted_metadata=[{
+                exported, _ = make_aim_v2_export(REPO_ROOT, sources=[source], posting_details=[{
                     "company": "Example", "title": "Field Account Manager", "location": location,
                 }])
 

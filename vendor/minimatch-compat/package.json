@@ -1,0 +1,10 @@
+{
+  "name": "@career-dashboard/minimatch-compat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Legacy CommonJS compatibility backed by the patched upstream minimatch engine",
+  "main": "index.cjs",
+  "dependencies": {
+    "minimatch-engine": "npm:minimatch@11.0.1"
+  }
+}
