@@ -132,7 +132,6 @@ export async function verifyInboxJobsAlive(
     },
     orderBy: [{ lastVerifiedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
     take: 25,
-    include: { _count: { select: { scoreEvents: true } } },
   });
 
   if (inboxJobs.length === 0) {
@@ -190,19 +189,16 @@ export async function verifyInboxJobsAlive(
     const updateData: Prisma.JobUpdateManyMutationInput = { lastVerifiedAt: checkedAt };
     const adp = isAdpPostingUrl(job.url || '');
     if (adp) updateData.verificationStatus = result.liveness;
-    const preserveScoredAdp = adp && (job.fitScore !== null || job.aimFitScore !== null || job.reqFitScore !== null
-      || (job._count?.scoreEvents || 0) > 0);
     if (replacement) {
       updateData.url = replacement.url;
       updateData.canonicalUrl = replacement.url;
     } else if ((result.liveness === 'expired' || (adp && result.liveness === 'unavailable'))
-      && job.status === 'inbox' && !preserveScoredAdp) {
+      && job.status === 'inbox') {
+      // Availability is independent of score authority. Expire the Inbox card
+      // without changing its saved scores, scored description or score history.
       updateData.status = 'expired';
       updateData.passReason = result.liveness === 'unavailable'
         ? ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON : 'Expired (URL dead)';
-      if (adp) Object.assign(unchangedInboxJob, {
-        fitScore: null, aimFitScore: null, reqFitScore: null, scoreEvents: { none: {} },
-      });
     }
     const persist = async (store: Pick<Prisma.TransactionClient, 'job'>
       & Partial<Pick<Prisma.TransactionClient, 'jobPipelineEvent'>>) => {

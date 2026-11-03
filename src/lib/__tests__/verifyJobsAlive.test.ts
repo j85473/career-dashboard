@@ -38,6 +38,9 @@ test('the Inbox verifier recognizes current closed-posting language', () => {
     'This posting has been removed.',
     'This job has expired.',
     'Applications are no longer being accepted for this job.',
+    'We are no longer accepting applications for this position.',
+    "We're no longer accepting applications for this job.",
+    'We’re no longer accepting applications for this requisition.',
   ];
 
   for (const notice of notices) {
@@ -110,6 +113,8 @@ test('an ATS shell cannot overrule an inconclusive requisition endpoint', () => 
 test('conditional deadlines and compensation language do not expire a live job', () => {
   const live = `
     Applications will be reviewed until the posting is closed.
+    If we are no longer accepting applications for this position, check our other openings.
+    We will update this page when we are no longer accepting applications for this job.
     Pay depends on the location in which the position is filled.
     Responsibilities include managing regional partner accounts.
   `;

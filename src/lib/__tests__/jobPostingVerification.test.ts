@@ -132,7 +132,7 @@ test('dead aggregator copy with verified employer posting repairs links and pres
   assert.equal(events.length, 1);
 });
 
-test('ADP review and Inbox checks show availability warnings without moving scored cards', async () => {
+test('ADP closures expire scored Inbox cards while preserving pending review and score authority', async () => {
   const adpUrl = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&ccId=19000101_000001&jobId=469173';
   for (const status of ['pending_af', 'inbox']) {
     for (const outcome of ['expired', 'unavailable']) {
@@ -144,27 +144,30 @@ test('ADP review and Inbox checks show availability warnings without moving scor
         fetchPosting: async () => outcome === 'expired' ? new Response('Gone', { status: 410 }) : new Response('<title>Recruitment</title>'),
         readPosting: async () => new Response(`Title: Recruitment\n\nURL Source: ${adpUrl}\n\nMarkdown Content:\nThis page is currently not available. Sorry for the inconvenience.`),
       });
-      assert.equal(job.status, before.status);
+      assert.equal(job.status, status === 'inbox' ? 'expired' : before.status);
       assert.equal(job.fitScore, before.fitScore);
       assert.equal(job.aimFitScore, before.aimFitScore);
       assert.equal(job.reqFitScore, before.reqFitScore);
       assert.equal(job.description, before.description);
       assert.equal(job.scoringStatus, before.scoringStatus);
-      assert.deepEqual(Object.keys(writes[0].data).sort(), ['lastVerifiedAt', 'verificationStatus']);
+      assert.deepEqual(Object.keys(writes[0].data).sort(), status === 'inbox'
+        ? ['lastVerifiedAt', 'passReason', 'status', 'verificationStatus'] : ['lastVerifiedAt', 'verificationStatus']);
       assert.equal(writes[0].data.verificationStatus, outcome);
       assert.equal(events.length, 1);
-      assert.match(progress.at(-1)!, outcome === 'expired' ? /1 closed-posting warnings/ : /1 application pages unavailable/);
+      assert.match(progress.at(-1)!, status === 'inbox' ? /1 expired/ : outcome === 'expired'
+        ? /1 closed-posting warnings/ : /1 application pages unavailable/);
     }
   }
 });
 
-test('ADP expiry protects historical score events and only expires an unscored Inbox card', async () => {
+test('ADP expiry preserves historical score events even without projected score values', async () => {
   for (const scoreEvents of [0, 1]) {
     const { client, job, writes } = inboxStore();
     Object.assign(job, { url: 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&jobId=469173',
       source: 'ATS-adp', fitScore: null, aimFitScore: null, reqFitScore: null, _count: { scoreEvents } });
     await verifyInboxJobsAlive(undefined, { client, delayMs: 0, fetchPosting: async () => new Response('Gone', { status: 410 }) });
-    assert.equal(job.status, scoreEvents ? 'inbox' : 'expired');
+    assert.equal(job.status, 'expired');
+    assert.equal(job._count.scoreEvents, scoreEvents);
     assert.equal(writes[0].data.verificationStatus, 'expired');
     assert.equal('fitScore' in writes[0].data, false);
     assert.equal('aimFitScore' in writes[0].data, false);
@@ -172,7 +175,7 @@ test('ADP expiry protects historical score events and only expires an unscored I
   }
 });
 
-test('an unavailable ADP application expires an unscored Inbox card and preserves historical scores', async () => {
+test('an unavailable ADP application expires an Inbox card without removing historical scores', async () => {
   for (const scoreEvents of [0, 1]) {
     const { client, job, events, writes } = inboxStore();
     const adpUrl = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&jobId=469173';
@@ -182,10 +185,11 @@ test('an unavailable ADP application expires an unscored Inbox card and preserve
       fetchPosting: async () => new Response('<title>Recruitment</title>'),
       readPosting: async () => new Response(`Title: Recruitment\n\nURL Source: ${adpUrl}\n\nMarkdown Content:\nThis page is currently not available. Sorry for the inconvenience.`),
     });
-    assert.equal(job.status, scoreEvents ? 'inbox' : 'expired');
+    assert.equal(job.status, 'expired');
+    assert.equal(job._count.scoreEvents, scoreEvents);
     assert.equal(writes[0].data.verificationStatus, 'unavailable');
-    assert.equal(writes[0].data.passReason, scoreEvents ? undefined : ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON);
-    assert.deepEqual(writes[0].where?.scoreEvents, scoreEvents ? undefined : { none: {} });
+    assert.equal(writes[0].data.passReason, ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON);
+    assert.equal(writes[0].where?.scoreEvents, undefined);
     assert.equal(job.description, description);
     assert.equal(events.length, 1);
     for (const field of ['fitScore', 'aimFitScore', 'reqFitScore', 'description']) {
@@ -194,7 +198,7 @@ test('an unavailable ADP application expires an unscored Inbox card and preserve
   }
 });
 
-test('a score receipt saved during ADP verification defeats an unavailable-page expiry', async () => {
+test('a scoring update during ADP verification defeats a stale unavailable-page expiry', async () => {
   const { client, job, events } = inboxStore();
   const adpUrl = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&jobId=469173';
   Object.assign(job, { url: adpUrl, source: 'ATS-adp', fitScore: null, aimFitScore: null, reqFitScore: null });
@@ -202,11 +206,53 @@ test('a score receipt saved during ADP verification defeats an unavailable-page 
     fetchPosting: async () => new Response('<title>Recruitment</title>'),
     readPosting: async () => {
       job._count.scoreEvents++;
+      job.aimFitScore = 82;
+      job.updatedAt = new Date(job.updatedAt.valueOf() + 1_000);
       return new Response(`Title: Recruitment\n\nURL Source: ${adpUrl}\n\nMarkdown Content:\nThis page is currently not available. Sorry for the inconvenience.`);
     },
   });
   assert.equal(job.status, 'inbox');
+  assert.equal(job.aimFitScore, 82);
   assert.equal(events.length, 0);
+});
+
+test('ADP empty detail data and a hydrated closure expire the scored Inbox card', async () => {
+  const { client, job, events, writes } = inboxStore();
+  const adpUrl = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=78d4f36d-26dc-4d8f-a910-8811ade8e31d&ccId=19000101_000001&jobId=577845';
+  Object.assign(job, { url: adpUrl, source: 'ATS-adp', _count: { scoreEvents: 2 } });
+  const before = { ...job, _count: { ...job._count } };
+  await verifyInboxJobsAlive(undefined, { client, delayMs: 0,
+    fetchPosting: async target => new Response(String(target).includes('/job-requisitions/')
+      ? '{"postingInstructions":[],"requisitionLocations":[]}' : '<title>Recruitment</title><div id="app"></div>'),
+    readPosting: async () => new Response(`Title: Recruitment\n\nURL Source: ${adpUrl}\n\nMarkdown Content:\nWarning\nWe are no longer accepting applications for this position.\nBack`),
+  });
+  assert.equal(job.status, 'expired');
+  assert.equal(job.fitScore, before.fitScore);
+  assert.equal(job.aimFitScore, before.aimFitScore);
+  assert.equal(job.reqFitScore, before.reqFitScore);
+  assert.equal(job.description, before.description);
+  assert.equal(job.scoringStatus, before.scoringStatus);
+  assert.deepEqual(job._count, before._count);
+  assert.deepEqual(Object.keys(writes[0].data).sort(), ['lastVerifiedAt', 'passReason', 'status', 'verificationStatus']);
+  assert.equal(events.length, 1);
+});
+
+test('ADP access blocks, gateway errors and timeouts keep scored Inbox work available', async () => {
+  for (const status of [403, 429, 502, 503, 'timeout'] as const) {
+    const { client, job, events, writes } = inboxStore();
+    Object.assign(job, { url: 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=78d4f36d-26dc-4d8f-a910-8811ade8e31d&jobId=577845', source: 'ATS-adp' });
+    const failure = async () => {
+      if (status === 'timeout') throw new Error('timeout');
+      return new Response('Gateway or access error', { status });
+    };
+    await verifyInboxJobsAlive(undefined, { client, delayMs: 0, fetchPosting: failure, readPosting: failure });
+    assert.equal(job.status, 'inbox');
+    assert.equal(job.aimFitScore, 64);
+    assert.equal(job.reqFitScore, 73);
+    assert.deepEqual(Object.keys(writes[0].data).sort(), ['lastVerifiedAt', 'verificationStatus']);
+    assert.equal(writes[0].data.verificationStatus, 'inconclusive');
+    assert.equal(events.length, 1);
+  }
 });
 
 test('uncertain canonical response preserves Inbox; confirmed dead posting expires', async () => {

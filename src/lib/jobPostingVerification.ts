@@ -97,6 +97,10 @@ export async function readRenderedPosting(url: string): Promise<Response> {
   if (process.env.JINA_API_KEY) headers.Authorization = `Bearer ${process.env.JINA_API_KEY}`;
   if (/\.(?:myworkdayjobs|myworkdaysite)\.com$/.test(new URL(url).hostname)) {
     headers['X-Wait-For-Selector'] = ':is([data-automation-id="jobPostingDescription"],[data-automation-id="errorMessage"])';
+  } else if (isAdpPostingUrl(url)) {
+    // ADP initially serves a shell. Its detail view has a Back button even
+    // when the selected job is closed; unpublished centers use a separate alert.
+    headers['X-Wait-For-Selector'] = ':is(#recruitment_jobDescription_back,.recrutiment-career-center-unpublished-message-content)';
   }
   return safeExternalFetch(target, { headers, signal: AbortSignal.timeout(35_000) });
 }

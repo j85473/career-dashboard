@@ -60,6 +60,18 @@ test('exact ADP requisition 404/410 expires; blocked responses and reader failur
   })).liveness, 'inconclusive');
 });
 
+test('ADP no-longer-accepting notice is closure in HTML and hydrated reader content', async () => {
+  const notice = '<div id="recruitment_content"><div>Warning</div><div>We are no longer accepting <strong>applications</strong> for this position.</div><button id="recruitment_jobDescription_back">Back</button></div>';
+  for (const rendered of [false, true]) {
+    const result = await verifyJobPosting({ url, title }, null, {
+      fetchPosting: async target => new Response(String(target) === adpPostingDetailUrl(url) ? data : rendered ? shell : notice),
+      readPosting: async () => new Response(reader('Warning\nWe are no longer accepting applications for this position.\nBack')),
+    });
+    assert.equal(result.liveness, 'expired');
+    assert.equal(result.probes.length, rendered ? 3 : 2);
+  }
+});
+
 test('a live ADP role with generic Recruitment browser title is recognized after rendering', async () => {
   const result = await verifyJobPosting({ url, title }, null, {
     fetchPosting: fetchRetained, readPosting: async () => new Response(reader(`## ${title}\n\n${description}`)),

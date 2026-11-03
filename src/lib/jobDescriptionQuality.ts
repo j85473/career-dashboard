@@ -95,7 +95,7 @@ function hasTerminalClosureSignal(text: string): boolean {
   if (/\bthis job cannot be viewed at this time\.\s*it has either been deleted or is no longer available for application\b/i.test(text)
     || /\bjazzhr\s*[-–—]\s*inactive career page\b/i.test(text)
       && /\bthis account is no longer active\.\s*learn more about jazzhr\b/i.test(text)) return true;
-  const terminalPattern = /\b(?:(?:job|position|posting|requisition)(?: you(?:'|’)re looking for)? (?:is )?no longer (?:available|active|open|posted|accepting (?:applications|candidates))|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition|listing) (?:has(?: recently)?(?: been)?|is|was) (?:closed|cancelled|canceled|expired|removed|taken offline))\b/gi;
+  const terminalPattern = /\b(?:(?:job|position|posting|requisition)(?: you(?:'|’)re looking for)? (?:is )?no longer (?:available|active|open|posted|accepting (?:applications|candidates))|we(?: are|'re|’re) no longer accepting applications for this (?:job|position|posting|requisition)|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition|listing) (?:has(?: recently)?(?: been)?|is|was) (?:closed|cancelled|canceled|expired|removed|taken offline))\b/gi;
   for (const match of text.matchAll(terminalPattern)) {
     const matchIndex = match.index || 0;
     const sentenceBoundary = Math.max(
@@ -120,7 +120,7 @@ function hasTerminalClosureSignal(text: string): boolean {
     if (/\blocation in which the position is filled\b/i.test(sentence)) continue;
     const prefix = text.slice(sentenceBoundary + 1, matchIndex);
     const conditionalApplicationLanguage = /\b(?:if|when|until|once|unless|before|after)\b/i.test(prefix)
-      && /\b(?:applications?|applicants?|accept(?:ed|ing)?|review(?:ed|ing)?|posting|requisition|deadline|may|might|could|will)\b/i.test(prefix);
+      && /\b(?:applications?|applicants?|accept(?:ed|ing)?|review(?:ed|ing)?|posting|requisition|deadline|may|might|could|will)\b/i.test(prefix + match[0]);
     if (!conditionalApplicationLanguage) return true;
   }
   return false;
