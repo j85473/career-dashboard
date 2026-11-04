@@ -155,6 +155,7 @@ model JobAttachment {
   id         String   @id @default(uuid())
   jobId      String
   fileName   String
+  kind       String?
   mimeType   String
   sizeBytes  Int
   content    Bytes

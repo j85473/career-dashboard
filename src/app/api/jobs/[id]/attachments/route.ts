@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { jobAttachmentKind } from '@/lib/jobAttachmentKind';
 import {
   MAX_JOB_ATTACHMENT_BYTES,
   MAX_JOB_ATTACHMENTS,
@@ -43,6 +44,11 @@ export async function POST(request: Request, context: Context) {
     return NextResponse.json({ error: 'Documents must be 10 MB or smaller.' }, { status: 413 });
   }
   const fileName = cleanAttachmentFileName(file.name);
+  const requestedKind = form.get('kind');
+  if (requestedKind !== null && requestedKind !== 'jd' && requestedKind !== 'prep') {
+    return NextResponse.json({ error: 'Choose a job description or interview prep document.' }, { status: 400 });
+  }
+  const kind = jobAttachmentKind({ kind: requestedKind, fileName });
   const content = Buffer.from(await file.arrayBuffer());
   const mimeType = attachmentMimeType(fileName, content);
   if (!mimeType) {
@@ -54,7 +60,7 @@ export async function POST(request: Request, context: Context) {
     const count = await tx.jobAttachment.count({ where: { jobId: id } });
     if (count >= MAX_JOB_ATTACHMENTS) return null;
     return tx.jobAttachment.create({
-      data: { jobId: id, fileName, mimeType, sizeBytes: content.length, content },
+      data: { jobId: id, fileName, kind, mimeType, sizeBytes: content.length, content },
       select: jobAttachmentSelect,
     });
   });

@@ -4,6 +4,7 @@ export const MAX_JOB_ATTACHMENTS = 20;
 export const jobAttachmentSelect = {
   id: true,
   fileName: true,
+  kind: true,
   mimeType: true,
   sizeBytes: true,
   uploadedAt: true,

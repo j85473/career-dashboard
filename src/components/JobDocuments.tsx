@@ -4,6 +4,8 @@ import { useRef, useState } from 'react';
 import { Download, Paperclip, X } from 'lucide-react';
 import { showConfirm } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
+import { jobAttachmentKind } from '@/lib/jobAttachmentKind';
+import { companyDisplayName } from '@/lib/companyPresentation';
 
 export function JobDocuments({ job, onJobUpdate }: {
   job: JobListItem;
@@ -15,6 +17,7 @@ export function JobDocuments({ job, onJobUpdate }: {
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState('');
   const attachments = job.attachments || [];
+  const company = job.employer || companyDisplayName(job.company, job.source);
   const busy = uploading || removing !== null;
 
   const upload = async (file: File) => {
@@ -28,6 +31,7 @@ export function JobDocuments({ job, onJobUpdate }: {
     try {
       const form = new FormData();
       form.set('file', file);
+      form.set('kind', uploadKind);
       const response = await fetch(`/api/jobs/${job.id}/attachments`, { method: 'POST', body: form });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'The document could not be uploaded.');
@@ -77,16 +81,17 @@ export function JobDocuments({ job, onJobUpdate }: {
       {attachments.length > 0 && <ul className="job-document-list">
         {attachments.map(attachment => {
           const url = `/api/jobs/${job.id}/attachments/${attachment.id}`;
+          const label = `${company} ${jobAttachmentKind(attachment) === 'prep' ? 'interview prep' : 'job description'}`;
           const previewable = attachment.mimeType === 'application/pdf' || attachment.mimeType.startsWith('text/plain');
           return <li key={attachment.id} className="job-attachment-item">
             <a className="job-attachment-link" href={previewable ? `${url}?inline=1` : url}
               target={previewable ? '_blank' : undefined} rel={previewable ? 'noopener noreferrer' : undefined}
               download={previewable ? undefined : attachment.fileName}
-              title={`${previewable ? 'Open' : 'Download'} ${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
-              {attachment.fileName}
+              title={`${previewable ? 'Open' : 'Download'} ${label} · ${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
+              {label}
             </a>
             <a className="job-attachment-download" href={url} download={attachment.fileName}
-              aria-label={`Download ${attachment.fileName}`} title={`Download ${attachment.fileName}`}><Download size={13} /></a>
+              aria-label={`Download ${label}`} title={`Download ${attachment.fileName}`}><Download size={13} /></a>
             <button type="button" className="job-attachment-remove" disabled={busy}
               aria-label={`Remove ${attachment.fileName} from ${job.title}`} title={`Remove ${attachment.fileName}`}
               onClick={() => void remove(attachment.id, attachment.fileName)}><X size={12} /></button>
