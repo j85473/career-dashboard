@@ -42,7 +42,7 @@ const fixtures = `
 ),
 "AtsCompany" AS (SELECT 'fixture'::text AS slug,'workday'::text AS platform,'active'::text AS status,0 AS "checkDay"),
 "AtsIngestionSegment" AS (
-  SELECT state AS status,items AS "itemCount",offset_ AS "processingOffset",retry AS "nextProcessAt",NULL::text AS "holdReason"
+  SELECT state AS status,items AS "itemCount",offset_ AS "processingOffset",retry AS "nextProcessAt",NULL::text AS "holdReason",NULL::text AS "retryCode"
   FROM (VALUES ('published',100,0,TIMESTAMP '2026-10-11 16:00'),
     ('published',50,0,NULL::timestamp),('published',2000,0,TIMESTAMP '2026-10-11 18:00'),
     ('processing',25,0,TIMESTAMP '2026-10-11 18:00'),
@@ -55,14 +55,14 @@ const employerFixtures = fixtures.replace('"AtsIngestionSegment" AS (', '"Ordina
 "AtsIngestionSegment" AS (
   SELECT * FROM "OrdinaryAtsIngestionSegment"
   UNION ALL
-  SELECT state,items,0,retry,reason FROM (VALUES
-    ('published',2000,TIMESTAMP '2026-10-11 16:00','oracle downloaded work awaits a verified employer'),
-    ('published',2000,TIMESTAMP '2026-10-11 16:00','ukg downloaded work awaits a verified employer'),
-    ('published',2000,TIMESTAMP '2026-10-11 18:00','oracle downloaded work awaits a verified employer'),
-    ('processing',25,TIMESTAMP '2026-10-11 16:00','oracle downloaded work awaits a verified employer'),
-    ('processing',25,TIMESTAMP '2026-10-11 18:00','ukg downloaded work awaits a verified employer'),
-    ('published',25,TIMESTAMP '2026-10-11 16:00','Connection failed or provider timed out')
-  ) AS cases(state,items,retry,reason)
+  SELECT state,items,0,retry,reason,code FROM (VALUES
+    ('published',2000,TIMESTAMP '2026-10-11 16:00','oracle downloaded work awaits a verified employer',NULL::text),
+    ('published',2000,TIMESTAMP '2026-10-11 16:00','New wording for missing location','location_unverified'),
+    ('published',2000,TIMESTAMP '2026-10-11 18:00','oracle downloaded work awaits a verified employer',NULL::text),
+    ('processing',25,TIMESTAMP '2026-10-11 16:00','oracle downloaded work awaits a verified employer',NULL::text),
+    ('processing',25,TIMESTAMP '2026-10-11 18:00','ukg downloaded work awaits a verified employer',NULL::text),
+    ('published',25,TIMESTAMP '2026-10-11 16:00','oracle downloaded work awaits a verified employer','network_failure')
+  ) AS cases(state,items,retry,reason,code)
 )`;
 
 function render(query: Prisma.Sql) {

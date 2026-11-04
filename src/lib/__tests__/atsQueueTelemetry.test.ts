@@ -116,9 +116,12 @@ test('a persistence hold keeps its final explanation and exact retry deadline wi
   try {
     assert.equal(await completeAtsV2SegmentProcessing({ segmentId: 'held', leaseToken: 'test',
       counters: { seen: 0, inserted: 0, duplicates: 0, filtered: 0, processingErrors: 0, providerErrors: 0 },
-      interrupted: true, error: 'oracle downloaded work awaits a verified employer', retryAt, now }), true);
+      interrupted: true, error: 'Oracle employer identity needs more evidence',
+      retryReason: { code: 'employer_unverified', scope: 'posting' }, retryAt, now }), true);
     const checkpoint = written as unknown as Record<string, unknown>;
-    assert.equal(checkpoint.holdReason, 'oracle downloaded work awaits a verified employer');
+    assert.equal(checkpoint.holdReason, 'Oracle employer identity needs more evidence');
+    assert.equal(checkpoint.retryCode, 'employer_unverified');
+    assert.equal(checkpoint.retryScope, 'posting');
     assert.equal(checkpoint.status, 'published');
     assert.deepEqual(checkpoint.nextProcessAt, retryAt);
     assert.equal(checkpoint.processingOffset, 0);

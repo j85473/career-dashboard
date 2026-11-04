@@ -1,3 +1,4 @@
+import { atsRetryColumns, readAtsRetryReason, type AtsRetryReason } from './atsRetryReason';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
 import { reserveFirstCollection } from './atsFirstCollectionAdmission';
@@ -29,7 +30,7 @@ import { isAtsBoardInRotationCohort, nextAtsBoardCheckDateForBoard, apiRotationD
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from './atsContinuationCapacity';
 import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
 import { atsListingAdmissionReservationSql, atsSegmentPersistenceCapacitySql } from './atsAdmissionCapacity';
-import { ATS_EMPLOYER_VERIFICATION_HOLD_REASONS, isAtsEmployerVerificationHold, type AtsEmployerRetryMode } from './atsEmployerRetry';
+import { atsEmployerVerificationHoldWhere, isAtsEmployerVerificationHold, type AtsEmployerRetryMode } from './atsEmployerRetry';
 export { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK } from './atsAcquisitionPressure';
 
 type JsonObject = Record<string, unknown>;
@@ -1602,6 +1603,7 @@ export async function terminalizeAtsV2NoNetworkItems(input: {
           enrichmentReason: marker.reason || marker.status,
           terminalAt: now,
           nextDetailAt: null,
+          ...atsRetryColumns(null),
         },
       });
       terminalized += updated.count;
@@ -1714,6 +1716,7 @@ export async function enrichNextAtsV2DetailItem(input: {
           detailError: marker.error || null,
           terminalAt,
           nextDetailAt: null,
+          ...atsRetryColumns(null),
           itemClaimToken: null,
           itemClaimOwner: null,
           itemHeartbeatAt: terminalAt,
@@ -1749,6 +1752,7 @@ export async function enrichNextAtsV2DetailItem(input: {
         enrichmentStatus: 'pending',
         detailError: (error instanceof Error ? error.message : String(error)).slice(0, 500),
         nextDetailAt: retryAt,
+        ...atsRetryColumns(readAtsRetryReason(error) || { code: 'internal_error', scope: 'posting' }),
         itemClaimToken: null,
         itemClaimOwner: null,
         itemHeartbeatAt: new Date(),
@@ -2091,12 +2095,8 @@ export async function claimNextAtsV2Segment(
       { status: 'processing', leaseExpiresAt: { lte: now } },
     ],
   };
-  const recovery: Prisma.AtsIngestionSegmentWhereInput = {
-    holdReason: { in: ATS_EMPLOYER_VERIFICATION_HOLD_REASONS },
-  };
-  const ordinary: Prisma.AtsIngestionSegmentWhereInput = {
-    OR: [{ holdReason: null }, { holdReason: { notIn: ATS_EMPLOYER_VERIFICATION_HOLD_REASONS } }],
-  };
+  const recovery = atsEmployerVerificationHoldWhere();
+  const ordinary = atsEmployerVerificationHoldWhere(false);
   const groups = employerRetryMode === 'prefer' ? [recovery, ordinary]
     : employerRetryMode === 'exclude' ? [ordinary] : [ordinary, recovery];
   let candidate: { id: string } | null = null;
@@ -2178,7 +2178,7 @@ export async function claimNextAtsV2Segment(
   );
   return {
     handoffKind: 'ledger_segment',
-    employerVerificationRetry: isAtsEmployerVerificationHold(segment.holdReason),
+    employerVerificationRetry: isAtsEmployerVerificationHold(segment.holdReason, segment.retryCode),
     id: segment.id,
     sourceBatchId: segment.batchId,
     slug: segment.batch.slug,
@@ -2520,6 +2520,7 @@ export async function completeAtsV2SegmentProcessing(input: {
   counters: IngestionCounters;
   interrupted?: boolean;
   retryAt?: Date | null;
+  retryReason?: AtsRetryReason | null;
   fatalError?: string | null;
   error?: string | null;
   now?: Date;
@@ -2560,6 +2561,7 @@ export async function completeAtsV2SegmentProcessing(input: {
         data: {
           status: 'published',
           holdReason: input.error || 'Normalization or persistence failed; retrying this segment.',
+          ...atsRetryColumns({ code: 'internal_error', scope: 'posting' }),
           nextProcessAt: new Date(now.getTime() + SEGMENT_RETRY_DELAYS_MS[retryIndex]),
           leaseToken: null,
           leaseOwner: null,
@@ -2587,6 +2589,7 @@ export async function completeAtsV2SegmentProcessing(input: {
       data: {
         status: complete ? 'processed' : 'published',
         holdReason: complete ? null : input.error || (input.interrupted ? 'Processing interrupted; remaining items retained for retry.' : null),
+        ...atsRetryColumns(complete ? null : input.retryReason || (input.interrupted ? { code: 'operation_interrupted', scope: 'posting' } : null)),
         processingOffset: nextOffset,
         insertedCount: nextCounters.inserted,
         duplicateCount: nextCounters.duplicates,
@@ -2630,6 +2633,7 @@ export async function failAtsV2SegmentProcessing(input: {
     data: {
       status: 'published',
       holdReason: input.error instanceof Error ? input.error.message : String(input.error),
+      ...atsRetryColumns(readAtsRetryReason(input.error) || { code: 'internal_error', scope: 'posting' }),
       nextProcessAt: new Date(now.getTime() + SEGMENT_RETRY_DELAYS_MS[attemptIndex]),
       leaseToken: null,
       leaseOwner: null,

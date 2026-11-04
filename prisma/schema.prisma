@@ -599,6 +599,8 @@ model AtsIngestionItem {
   enrichmentReason            String?
   detailHttpStatus            Int?
   detailError                 String?
+  retryCode                   String?
+  retryScope                  String?
   detailAttemptCount          Int                               @default(0)
   nextDetailAt                DateTime?
   terminalAt                  DateTime?
@@ -743,6 +745,9 @@ model AtsIngestionSegment {
   processingErrorCount Int               @default(0)
   /// Diagnostic only; never changes retry eligibility or existing score authority.
   holdReason           String?
+  /// Explicit retry classification; legacy rows retain their saved diagnostic and retry date.
+  retryCode            String?
+  retryScope           String?
   nextProcessAt        DateTime?
   leaseToken           String?           @unique
   leaseOwner           String?

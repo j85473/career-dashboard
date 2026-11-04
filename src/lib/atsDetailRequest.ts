@@ -1,19 +1,25 @@
+import { atsRateLimitIsBoardScoped } from './atsUtils';
+import { withAtsRetryReason, type AtsRetryCode, type AtsRetryReason } from './atsRetryReason';
 import type { AtsJobEnrichmentDependencies, EnrichAtsListingJobInput } from './atsJobEnrichment';
 
 export const ATS_DETAIL_QUEUE_TIMEOUT_MS = 45_000;
 
 export class AtsDetailHttpError extends Error {
+  readonly retryReason: AtsRetryReason;
   constructor(readonly status: number) {
     super(`ATS detail endpoint returned HTTP ${status}`);
     this.name = 'AtsDetailHttpError';
+    this.retryReason = { code: [403, 404, 410].includes(status) ? 'posting_unavailable' : 'network_failure', scope: 'posting' };
   }
 }
 
 /** A response for one posting is unusable, not evidence of a provider outage. */
 export class AtsDetailResponseError extends Error {
-  constructor(message: string, cause?: unknown) {
+  readonly retryReason: AtsRetryReason;
+  constructor(message: string, cause?: unknown, code: AtsRetryCode = 'posting_mismatch') {
     super(message);
     this.name = 'AtsDetailResponseError';
+    this.retryReason = { code, scope: 'posting' };
     this.cause = cause;
   }
 }
@@ -80,10 +86,11 @@ export function createAtsDetailRequestSession(input: EnrichAtsListingJobInput,
         try { await input.onResponseReceived?.({ status: response.status, respondedAt }); }
         catch (error) { throw new AtsEnrichmentControlError(error); }
         if (response.status === 429) {
-          throw await dependencies.createDeferredError(`ATS-${platform}`, retryAtFrom429(response, respondedAt));
+          throw withAtsRetryReason(await dependencies.createDeferredError(`ATS-${platform}`, retryAtFrom429(response, respondedAt)),
+            { code: 'provider_rate_limit', scope: vendorRequest ? atsRateLimitIsBoardScoped(platform) ? 'board' : 'provider' : 'posting' });
         }
         if (!response.ok && !(options.allowMissing && [403, 404, 410].includes(response.status))) {
-          if (!vendorRequest) throw new AtsDetailResponseError(`Linked employer website HTTP ${response.status}`);
+          if (!vendorRequest) throw new AtsDetailResponseError(`Linked employer website HTTP ${response.status}`, undefined, 'network_failure');
           throw new AtsDetailHttpError(response.status);
         }
         await options.inspect?.(response);
@@ -94,8 +101,8 @@ export function createAtsDetailRequestSession(input: EnrichAtsListingJobInput,
           let decision;
           try { decision = await dependencies.reserveProviderBudgetForSource(source); }
           catch (error) { throw new AtsEnrichmentControlError(error); }
-          if (!decision.allowed) throw await dependencies.createDeferredError(`ATS-${platform}`,
-            decision.retryAt || new Date(dependencies.now().getTime() + 15 * 60_000));
+          if (!decision.allowed) throw withAtsRetryReason(await dependencies.createDeferredError(`ATS-${platform}`,
+            decision.retryAt || new Date(dependencies.now().getTime() + 15 * 60_000)), { code: 'provider_unavailable', scope: 'provider' });
         }
         dispatchSignal.throwIfAborted();
         try { await input.onRequestStarted?.(); }
@@ -113,8 +120,9 @@ export function createAtsDetailRequestSession(input: EnrichAtsListingJobInput,
             : { 'User-Agent': dependencies.jsonLdFetchUserAgent, Accept: 'application/json,text/html' } };
           return await (options.transport === 'fetch' ? dependencies.fetch : dependencies.safeExternalFetch)(url, init);
         } catch (error) {
-          if (!vendorRequest && !isAbortError(error)) throw new AtsDetailResponseError('Linked employer website unavailable', error);
-          throw error;
+          if (!vendorRequest && !isAbortError(error)) throw new AtsDetailResponseError('Linked employer website unavailable', error, 'network_failure');
+          throw error instanceof Error && !isAbortError(error)
+            ? withAtsRetryReason(error, { code: 'network_failure', scope: 'posting' }) : error;
         }
       };
       const response = vendorRequest ? await dependencies.fetchPlatformResponse(platform, dispatchSignal, dispatch,

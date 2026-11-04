@@ -1,3 +1,4 @@
+import type { AtsRetryReason } from './atsRetryReason';
 import { planAtsRequest, waitForAtsRequestTurn, withAtsLocalRequestCapacity } from './atsRequestConcurrency';
 import { atsRequestSpacingMs } from './atsRequestPacing';
 import { atsAuthFailureIsPlatformWide, atsResponseSchemaFailureIsPlatformWide, atsRateLimitIsAbsentBoard, atsRateLimitIsBoardScoped } from './atsUtils';
@@ -110,6 +111,7 @@ export class AtsPlatformDeferredError extends Error {
   constructor(
     readonly platform: string,
     readonly retryAt?: Date,
+    readonly retryReason: AtsRetryReason = { code: 'provider_unavailable', scope: 'provider' },
   ) {
     super(
       `${platform} detail enrichment deferred by the platform circuit`

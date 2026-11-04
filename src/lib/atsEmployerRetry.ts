@@ -1,7 +1,7 @@
 import { Prisma } from './prismaClient';
 
-// These are durable deferral reasons, including the reasons already saved by
-// older workers. Classifying them needs no rewrite of a segment or its retry.
+// Compatibility for older workers only. New work stores a retry code separately
+// from this diagnostic; existing segments and retry dates need no rewrite.
 export const ATS_EMPLOYER_VERIFICATION_HOLD_REASONS = [
   'oracle downloaded work awaits a verified employer',
   'ukg downloaded work awaits a verified employer',
@@ -27,12 +27,26 @@ export const ATS_EMPLOYER_RETRY_CAPACITY_JOBS = atsEmployerRetryCapacityJobs(
 export const ATS_EMPLOYER_RETRY_INTERVAL_MS = 60_000;
 export const ATS_EMPLOYER_RETRY_ORDINARY_TURNS = 4;
 
-export function isAtsEmployerVerificationHold(reason: string | null): boolean {
+export const ATS_EMPLOYER_RETRY_CODES = ['employer_unverified', 'location_unverified'];
+
+export function isAtsEmployerVerificationHold(reason: string | null, retryCode?: string | null): boolean {
+  if (retryCode != null) return ATS_EMPLOYER_RETRY_CODES.includes(retryCode);
   return reason !== null && ATS_EMPLOYER_VERIFICATION_HOLD_REASONS.includes(reason);
 }
 
+export function atsEmployerVerificationHoldWhere(recovery = true): Prisma.AtsIngestionSegmentWhereInput {
+  return recovery ? { OR: [
+    { retryCode: { in: ATS_EMPLOYER_RETRY_CODES } },
+    { retryCode: null, holdReason: { in: ATS_EMPLOYER_VERIFICATION_HOLD_REASONS } },
+  ] } : { OR: [
+    { retryCode: { not: null, notIn: ATS_EMPLOYER_RETRY_CODES } },
+    { retryCode: null, OR: [{ holdReason: null }, { holdReason: { notIn: ATS_EMPLOYER_VERIFICATION_HOLD_REASONS } }] },
+  ] };
+}
+
 export function atsEmployerVerificationHoldSql(): Prisma.Sql {
-  return Prisma.sql`COALESCE(segment."holdReason", '') IN (${Prisma.join(ATS_EMPLOYER_VERIFICATION_HOLD_REASONS)})`;
+  return Prisma.sql`(COALESCE(segment."retryCode", '') IN (${Prisma.join(ATS_EMPLOYER_RETRY_CODES)})
+    OR (segment."retryCode" IS NULL AND COALESCE(segment."holdReason", '') IN (${Prisma.join(ATS_EMPLOYER_VERIFICATION_HOLD_REASONS)})))`;
 }
 
 export type AtsEmployerRetryMode = 'prefer' | 'fallback' | 'exclude';

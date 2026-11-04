@@ -18,6 +18,16 @@ test('only explicit retained employer-evidence deferrals use recovery capacity',
   }
 });
 
+test('retry codes control scheduling independently of diagnostic wording and override legacy text', () => {
+  for (const message of [null, '', 'An employer name is still missing', 'HTTP 500']) {
+    assert.equal(isAtsEmployerVerificationHold(message, 'employer_unverified'), true);
+    assert.equal(isAtsEmployerVerificationHold(message, 'location_unverified'), true);
+  }
+  for (const code of ['posting_mismatch', 'network_failure', 'provider_rate_limit', 'future_unknown_code']) {
+    assert.equal(isAtsEmployerVerificationHold('oracle downloaded work awaits a verified employer', code), false);
+  }
+});
+
 test('the recovery reservation leaves room below configured resume and pause limits', () => {
   assert.equal(atsEmployerRetryCapacityJobs(1_000, 2_000), 100);
   assert.equal(atsEmployerRetryCapacityJobs(50, 100), 12);

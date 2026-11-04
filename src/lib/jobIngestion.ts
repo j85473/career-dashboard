@@ -1,3 +1,4 @@
+import { readAtsRetryReason, type AtsRetryReason } from './atsRetryReason';
 import { AtsPlatformDeferredError, RateLimitedError, PLATFORM_THROTTLE_MS, fetchAtsPlatformResponse, platformPauseRemainingMs, waitForPlatformSlot, IngestionInterruptedError, interruptionError } from './atsProviderRequest';
 // Compatibility exports for consumers that predate the separate request runtime.
 export { AtsPlatformDeferredError, AtsProviderFailureRecordedError, RateLimitedError, PLATFORM_THROTTLE_MS, fetchAtsPlatformResponse, throttlePlatform, platformPauseRemainingMs, waitForPlatformSlot, IngestionInterruptedError } from './atsProviderRequest';
@@ -303,8 +304,8 @@ const SOURCE_CIRCUIT_DURATION_MS = 6 * 60 * 60 * 1_000;
 
 /** Missing employer evidence retains downloaded work without charging a failure. */
 export class AtsEmployerDeferredError extends AtsPlatformDeferredError {
-  constructor(platform: string) {
-    super(platform, new Date(Date.now() + 3600000));
+  constructor(platform: string, code: 'employer_unverified' | 'location_unverified' = 'employer_unverified') {
+    super(platform, new Date(Date.now() + 3600000), { code, scope: 'posting' });
     this.name = 'AtsEmployerDeferredError';
     this.message = `${platform} downloaded work awaits a verified employer`;
   }
@@ -315,7 +316,7 @@ export function requirePublicAtsEmployer(platform: string, company: string, loca
     throw new AtsEmployerDeferredError(platform);
   }
   if (platform === 'successfactors' && (!location?.trim() || /^(?:unknown(?: location)?|n\/a|not specified)$/i.test(location.trim()))) {
-    const error = new AtsEmployerDeferredError(platform);
+    const error = new AtsEmployerDeferredError(platform, 'location_unverified');
     error.message = `${platform} downloaded work awaits a verified posting location`;
     throw error;
   }
@@ -2827,6 +2828,7 @@ export async function ingestJobs(
   const atsDeadlineController = atsDeadlineMs == null ? null : new AbortController();
   let ingestionInterruptionReason: string | null = null;
   let prefetchedAtsRetryAt: Date | null = null;
+  let prefetchedAtsRetryReason: AtsRetryReason | null = null;
   let fatalPrefetchedAtsError: string | null = null;
   const atsDeadlineTimer = atsDeadlineController && atsDeadlineMs != null
     ? setTimeout(() => {
@@ -3287,6 +3289,7 @@ export async function ingestJobs(
               counters,
               interrupted: Boolean(ingestionInterruptionReason),
               retryAt: prefetchedAtsRetryAt,
+              retryReason: prefetchedAtsRetryReason,
               fatalError: fatalPrefetchedAtsError,
               error: errors,
               now: finishedAt,
@@ -6126,6 +6129,7 @@ export async function ingestJobs(
               // jobs or charging the batch failure budget.
               ingestionInterruptionReason ||= err.message;
               prefetchedAtsRetryAt = err.retryAt || null;
+              prefetchedAtsRetryReason = readAtsRetryReason(err);
             } else {
               await prisma.atsCompany.update({
                 where: { slug_platform: { slug: board.slug, platform: board.platform } },

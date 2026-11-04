@@ -1,3 +1,4 @@
+import { readAtsRetryReason } from '../atsRetryReason';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { enrichAtsListingJob, markAtsListingsWithoutDetail, readAtsJobEnrichmentMarker,
@@ -130,6 +131,7 @@ test('unresolved employers and malformed identities remain pending without modif
       await assert.rejects(enrichAtsListingJob({ platform, slug, job: raw, requestTimeoutMs: 1000 }, h.dependencies), error => {
         assert.ok(error instanceof AtsPlatformDeferredError);
         assert.equal(error.retryAt?.getTime(), now.getTime() + 3600_000);
+        assert.deepEqual(readAtsRetryReason(error), { code: raw.publicAtsPostingId === 'wrong-id' ? 'posting_mismatch' : 'employer_unverified', scope: 'posting' });
         return true;
       });
       assert.equal(readAtsJobEnrichmentMarker(raw), null);
@@ -219,4 +221,25 @@ test('retained incomplete handoffs can recover a local copy without rewriting th
   assert.deepEqual(result, expected);
   assert.deepEqual(calls, ['board', 'posting']);
   assert.deepEqual(raw, before);
+});
+
+test('retry classification distinguishes provider, corporate-site and malformed-posting failures', async () => {
+  for (const [failure, reason] of [
+    ['rate', { code: 'provider_rate_limit', scope: 'provider' }],
+    ['network', { code: 'network_failure', scope: 'posting' }],
+    ['corporate', { code: 'provider_rate_limit', scope: 'posting' }],
+    ['identity', { code: 'posting_mismatch', scope: 'posting' }],
+  ] as const) {
+    const h = harness(url => {
+      if (failure === 'network') throw new TypeError('Request interrupted by a disconnected socket');
+      if (failure === 'rate') return response('', url, 429);
+      if (failure === 'identity') return response(oracleDetail('Example Employer').replace('Account Manager', 'Another Job'), url);
+      return response(url === oracleApi ? oracleDetail() : url === corporate ? '' : oracleHeader, url, url === corporate ? 429 : 200);
+    });
+    await assert.rejects(enrichAtsListingJob({ platform: 'oracle', slug: oracleSlug, job: oracleJob,
+      requestTimeoutMs: 1000 }, h.dependencies), error => {
+      assert.deepEqual(readAtsRetryReason(error), reason);
+      return true;
+    });
+  }
 });

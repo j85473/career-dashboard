@@ -1,6 +1,7 @@
+import { readAtsRetryReason, withAtsRetryReason, type AtsRetryReason } from './atsRetryReason';
 import { createAtsDetailRequestSession, AtsDetailHttpError, AtsDetailResponseError, AtsEnrichmentControlError, isAbortError } from './atsDetailRequest';
 import { publishedEmployerName } from './publicAtsEmployer';
-import { readPublishedAtsPostingEvidence, type AtsPostingEvidenceResponse } from './atsEmployerRecovery';
+import { readPublishedAtsPostingResult, type AtsPostingEvidenceResponse } from './atsEmployerRecovery';
 import { publicAtsBoardSlugFromUrl, isPublicAtsPlatform } from './publicAtsBoards';
 import { eightfoldDetailUrl, eightfoldLocation } from './eightfoldBoard';
 import { isDailyAtsBoard } from './atsRotation';
@@ -832,8 +833,9 @@ async function deferredError(
   dependencies: AtsJobEnrichmentDependencies,
   platform: string,
   retryAt?: Date,
+  reason: AtsRetryReason = { code: 'operation_interrupted', scope: 'posting' },
 ): Promise<Error> {
-  return dependencies.createDeferredError(`ATS-${platform}`, retryAt);
+  return withAtsRetryReason(await dependencies.createDeferredError(`ATS-${platform}`, retryAt), reason);
 }
 
 /** Retain unresolved postings, preserving the deferred-error contract for every caller. */
@@ -841,12 +843,13 @@ async function successFactorsDetailDeferredError(
   dependencies: AtsJobEnrichmentDependencies,
   reason: string,
   attemptCount?: number,
+  retryReason: AtsRetryReason = { code: 'employer_unverified', scope: 'posting' },
 ): Promise<Error> {
   const attempt = typeof attemptCount === 'number' && Number.isFinite(attemptCount)
     ? Math.max(1, Math.floor(attemptCount)) : 1;
   const hours = Math.min(24, 2 ** Math.min(5, attempt - 1));
   const retryAt = new Date(dependencies.now().getTime() + hours * 3600_000);
-  const error = await deferredError(dependencies, 'successfactors', retryAt);
+  const error = await deferredError(dependencies, 'successfactors', retryAt, retryReason);
   error.message = `SuccessFactors detail remains pending: ${reason.slice(0, 300)}; retry at ${retryAt.toISOString()}`;
   return error;
 }
@@ -873,14 +876,15 @@ async function enrichEmployerVerifiedPosting(input: EnrichAtsListingJobInput,
         && new URL(url).pathname.split('/').filter(Boolean).at(-1) === stringValue(input.job.publicAtsPostingId)
         && stringValue(input.job.title)) initial = { url: detail.href, response: await fetchPage(detail.href) };
     }
-    const evidence = await readPublishedAtsPostingEvidence(platform, slug, input.job,
+    const result = await readPublishedAtsPostingResult(platform, slug, input.job,
       { fetchPage, registry: async (...args) => {
         try { return await dependencies.verifiedBoardEmployer(...args); }
         catch (error) { throw new AtsEnrichmentControlError(error); }
       } }, initial);
     session.assertWithinDeadline();
-    if (!evidence) throw new AtsDetailResponseError(`${platform} posting identity or employer evidence is incomplete`
-      + (session.httpStatus ? ` (HTTP ${session.httpStatus})` : ''));
+    if (result.kind === 'unresolved') throw new AtsDetailResponseError(`${platform} posting identity or employer evidence is incomplete`
+      + (session.httpStatus ? ` (HTTP ${session.httpStatus})` : ''), undefined, result.reason);
+    const evidence = result.evidence;
     await dependencies.recordProviderSuccess(`ATS-${platform} Details`, dependencies.now()).catch(error => {
       logTelemetryPersistenceFailure('success', `ATS-${platform} Details`, error);
     });
@@ -900,7 +904,8 @@ async function enrichEmployerVerifiedPosting(input: EnrichAtsListingJobInput,
     }
     const message = error instanceof Error ? error.message : String(error);
     if (fields.company !== 'Oracle' && !publishedEmployerName(fields.company)) {
-      const pending = await deferredError(dependencies, platform, new Date(dependencies.now().getTime() + 3600_000));
+      const pending = await deferredError(dependencies, platform, new Date(dependencies.now().getTime() + 3600_000),
+        readAtsRetryReason(error) || { code: error instanceof SyntaxError ? 'posting_mismatch' : 'network_failure', scope: 'posting' });
       pending.message = `${platform} detail awaits a verified employer: ${message.slice(0, 300)}`;
       throw pending;
     }
@@ -968,6 +973,7 @@ export async function enrichAtsListingJob(
         !postingMetadataValue(fields.location) && 'location'].filter(Boolean).join(' and ');
       throw await successFactorsDetailDeferredError(
         dependencies, `could not verify posting ${missing}`, input.detailAttemptCount,
+        { code: !publishedEmployerName(fields.company) ? 'employer_unverified' : 'location_unverified', scope: 'posting' },
       );
     }
     return cloneWithMarker(input.job, marker({
@@ -995,7 +1001,8 @@ export async function enrichAtsListingJob(
     }
     const message = error instanceof Error ? error.message : String(error);
     if (platform === 'successfactors') {
-      throw await successFactorsDetailDeferredError(dependencies, message, input.detailAttemptCount);
+      throw await successFactorsDetailDeferredError(dependencies, message, input.detailAttemptCount,
+        readAtsRetryReason(error) || { code: 'network_failure', scope: 'posting' });
     }
     return cloneWithMarker(input.job, marker({
       status: 'unavailable',
