@@ -24,6 +24,7 @@ import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import { withJobApplicationContext } from '@/lib/jobApplicationContext';
+import { interviewOrderedPage, jobInterviewsSelect } from '@/lib/jobInterviewOrder';
 import {
   isManualScoringQueueTab,
   manualScoringCombinedOrderedPage,
@@ -62,6 +63,7 @@ const listSelect = {
   experienceStatus: true,
   createdAt: true,
   updatedAt: true,
+  interviews: jobInterviewsSelect,
   attachments: { select: jobAttachmentSelect, orderBy: [{ uploadedAt: 'desc' as const }, { id: 'desc' as const }] },
 } satisfies Prisma.JobSelect;
 
@@ -101,7 +103,10 @@ async function getJobs(request: Request) {
     const statusEntryPage = usesStatusEntryTimeSort(status, sort)
       ? await statusEntryOrderedPage(where, status, sort === 'oldest' ? 'asc' : 'desc', limit, offset)
       : null;
-    const historyOrderedPage = failurePage || manualScoringPage || statusEntryPage;
+    const interviewPage = status === 'interviewing' && sort === 'interview_time'
+      ? await interviewOrderedPage(where, limit, offset)
+      : null;
+    const historyOrderedPage = failurePage || manualScoringPage || statusEntryPage || interviewPage;
     const [pageJobs, total] = atsPage
       ? await Promise.all([
         atsPage.ids.length === 0

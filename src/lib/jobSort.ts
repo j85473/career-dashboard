@@ -17,8 +17,9 @@ export function usesStatusEntryTimeSort(status: string, sort: string): boolean {
   return statusEntryHistoryValue(status) !== null && (sort === 'newest' || sort === 'oldest');
 }
 
-export function defaultJobSort(status: string): 'combined' | 'newest' | 'aim_fit' {
+export function defaultJobSort(status: string): 'combined' | 'newest' | 'aim_fit' | 'interview_time' {
   if (status === 'inbox') return 'combined';
+  if (status === 'interviewing') return 'interview_time';
   if (statusEntryHistoryValue(status)) return 'newest';
   return status === 'log' ? 'newest' : 'aim_fit';
 }

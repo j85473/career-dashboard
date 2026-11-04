@@ -100,6 +100,7 @@ model Job {
   aimFactualExtractions AimFactualExtraction[]
   aimFailureReceipts    AimScoringFailureReceipt[]
   attachments           JobAttachment[]
+  interviews            JobInterview[]
 
   @@index([status])
   @@index([scoringStatus])
@@ -136,6 +137,18 @@ model Job {
   /// that exact expression or the planner cannot use it.
   @@index([source])
   @@index([createdAt])
+}
+
+model JobInterview {
+  id          String   @id @default(uuid())
+  jobId       String
+  scheduledAt DateTime
+  label       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, scheduledAt])
 }
 
 model JobAttachment {

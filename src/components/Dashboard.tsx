@@ -3,6 +3,7 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import JobCard from './JobCard';
+import { compareInterviewJobs } from '@/lib/jobInterviewSchedule';
 import { LinkedInTab } from './LinkedInTab';
 import { ExpandOverlay } from './ExpandOverlay';
 import { ScoringLogTab } from './ScoringLogTab';
@@ -558,9 +559,15 @@ export default function Dashboard() {
       && updatedEmployer !== null
       && !sameCompanyName(updatedEmployer, companyFilter),
     );
-    setJobs(prev => leavesInbox
-      ? prev.filter(job => job.id !== id)
-      : prev.map(job => job.id === id ? { ...job, ...updates } : job));
+    setJobs(prev => {
+      const updated = leavesInbox ? prev.filter(job => job.id !== id)
+        : prev.map(job => job.id === id ? { ...job, ...updates } : job);
+      if (dataStatus === 'interviewing' && currentSort === 'interview_time') {
+        const now = Date.now();
+        updated.sort((a, b) => compareInterviewJobs(a, b, now));
+      }
+      return updated;
+    });
     if (leavesInbox) {
       setPagination(previous => {
         const total = Math.max(0, previous.total - 1);
@@ -586,6 +593,9 @@ export default function Dashboard() {
     });
     setSelectedJob((prev) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
     jobCacheRef.current.clear();
+    if (!companyFilter && dataStatus === 'interviewing' && currentSort === 'interview_time' && updates.interviews !== undefined) {
+      void fetchJobs('interviewing', { force: true, preserveLoaded: true });
+    }
     if (companyFilter && (updates.status !== undefined || updates.tailoringStaged !== undefined || updates.company !== undefined)) {
       void runCompanySearch(companyFilter);
     }
@@ -595,7 +605,7 @@ export default function Dashboard() {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('dashboardJobUpdated', { detail: { id, updates } }));
     }
-  }, [companyFilter, dataStatus, runCompanySearch, jobs, fetchJobs]);
+  }, [companyFilter, dataStatus, currentSort, runCompanySearch, jobs, fetchJobs]);
 
   const handleToggleTailoring = async (id: string, isStaged: boolean) => {
     const mutationView = listViewKey;
@@ -1095,6 +1105,7 @@ export default function Dashboard() {
                       onChange={handleSortChange}
                     >
                       {dataStatus === 'inbox' && <option value="combined">Combined Sort</option>}
+                      {dataStatus === 'interviewing' && <option value="interview_time">Interview date · Upcoming first</option>}
                       <option value="newest">Newest to Oldest</option>
                       <option value="oldest">Oldest to Newest</option>
                       <option value="aim_fit">Highest Aim Fit Score</option>

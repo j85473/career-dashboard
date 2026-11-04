@@ -53,6 +53,12 @@ export interface JobAttachmentItem {
   uploadedAt: string;
 }
 
+export interface JobInterviewItem {
+  id: string;
+  scheduledAt: string;
+  label: string;
+}
+
 export interface JobListItem {
   id: string;
   title: string;
@@ -72,6 +78,7 @@ export interface JobListItem {
   updatedAt?: string;
   /** Original Applied event in the current application, independent of later edits. */
   appliedAt?: string | null;
+  interviews?: JobInterviewItem[];
   /** Saved card this duplicate was combined into; application evidence stays on that card. */
   combinedInto?: {
     id: string;

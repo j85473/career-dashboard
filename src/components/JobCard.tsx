@@ -14,6 +14,7 @@ import { isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 import { consolidatedIntoJobId } from '@/lib/jobConsolidationReason';
 import { companyDisplayName } from '@/lib/companyPresentation';
 import { CompanyLogo } from '@/components/CompanyLogo';
+import { InterviewSchedule } from '@/components/InterviewSchedule';
 
 
 
@@ -292,6 +293,10 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
             })()
           )}
       </div>
+
+      {(job.status === 'interviewing' || Boolean(job.interviews?.length)) && (
+        <InterviewSchedule job={job} onJobUpdate={onJobUpdate} />
+      )}
 
       <div className="job-card-attachments" onClick={(event) => event.stopPropagation()}>
         <input

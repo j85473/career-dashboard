@@ -13,6 +13,7 @@ import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import { withJobApplicationContext } from '@/lib/jobApplicationContext';
+import { interviewOrderedPage, jobInterviewsSelect } from '@/lib/jobInterviewOrder';
 import { jobSourceUrlMatchIds, jobUrlSearchWhere } from '@/lib/jobUrlSearch';
 import { jobLocationSearchValues, LocationSearchError, resolveJobLocationFilter } from '@/lib/jobLocationSearch';
 import {
@@ -53,6 +54,7 @@ const searchSelect = {
   postedTravel: true,
   createdAt: true,
   updatedAt: true,
+  interviews: jobInterviewsSelect,
   attachments: { select: jobAttachmentSelect, orderBy: [{ uploadedAt: 'desc' as const }, { id: 'desc' as const }] },
 } satisfies Prisma.JobSelect;
 
@@ -312,7 +314,10 @@ async function searchJobs(request: Request) {
         statusEntrySearchCandidates?.map((candidate) => candidate.id),
       )
       : null;
-    const historyOrderedPage = companyPage || failurePage || manualScoringPage || statusEntryPage;
+    const interviewPage = status === 'interviewing' && sort === 'interview_time'
+      ? await interviewOrderedPage(where, limit, (page - 1) * limit)
+      : null;
+    const historyOrderedPage = companyPage || failurePage || manualScoringPage || statusEntryPage || interviewPage;
     const [jobs, total] = historyOrderedPage
       ? await Promise.all([
         historyOrderedPage.ids.length === 0

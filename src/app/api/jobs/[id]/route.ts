@@ -31,12 +31,14 @@ import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { presentJobDescription } from '@/lib/jobDescriptionPresentation';
 import { withJobApplicationContext } from '@/lib/jobApplicationContext';
 import { userCanonicalJobUrlFields } from '@/lib/userCanonicalJobUrl';
+import { jobInterviewsSelect } from '@/lib/jobInterviewOrder';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const [job, scoreHistory] = await Promise.all([
     prisma.job.findUnique({ where: { id }, include: {
+      interviews: jobInterviewsSelect,
       attachments: { select: jobAttachmentSelect, orderBy: [{ uploadedAt: 'desc' }, { id: 'desc' }] },
     } }),
     prisma.jobScoreEvent.findMany({

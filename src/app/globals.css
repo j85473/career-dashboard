@@ -1513,3 +1513,22 @@ body {
 .pipeline-status-panel .ats-queue-panel { margin-bottom: 0; }
 .scoring-log .ats-queue-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 600px) { .scoring-log .ats-queue-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Interview rounds stay with their job card, including after a status change. */
+.interview-schedule { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(96, 165, 250, 0.06); min-width: 0; }
+.interview-schedule-heading { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; color: #60a5fa; }
+.interview-schedule-empty, .interview-timezone { color: var(--text-muted); font-size: 11px; margin: 8px 0; }
+.interview-schedule-round { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.interview-schedule-round > div { min-width: 0; }
+.interview-round-label { display: block; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.interview-schedule time { display: block; color: var(--text-muted); font-size: 11px; margin-top: 3px; }
+.interview-schedule button { border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 5px 8px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 11px; }
+.interview-schedule button:disabled { opacity: 0.5; cursor: wait; }
+.interview-schedule .interview-add { margin-top: 10px; color: #60a5fa; }
+.interview-schedule-form { display: grid; gap: 8px; margin-top: 10px; }
+.interview-schedule-form label { display: grid; gap: 5px; font-size: 11px; color: var(--text-muted); }
+.interview-schedule-form input { width: 100%; min-width: 0; box-sizing: border-box; padding: 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface); font: inherit; color-scheme: dark; }
+.interview-form-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.interview-form-actions button[type="submit"] { color: #60a5fa; }
+.interview-schedule .interview-remove, .interview-schedule-error { color: #f87171; }
+.interview-schedule-error { font-size: 12px; margin: 8px 0 0; }
