@@ -779,6 +779,10 @@ model AtsAcquisitionRuntimeGate {
   compatibilityActivatedAt        DateTime  @default(now())
   v2AuthorityActivatedAt          DateTime?
   activatedLedgerVersion          Int?
+  /// Explicit retirement of the legacy API acquisition loop. Public HTTP and
+  /// browser collectors and historical payload readers retain their ownership.
+  legacyAcquisitionRetiredAt       DateTime?
+  legacyAcquisitionRetirementReleaseId String?
   /// `draining` pauses only new board admissions. Already-durable listing,
   /// enrichment, sealing, publication, and persistence work remains runnable.
   admissionState                  String    @default("open")

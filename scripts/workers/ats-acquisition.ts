@@ -84,7 +84,6 @@ async function main(): Promise<void> {
   }
 
   const [
-    loopModule,
     pipelineStateModule,
     prismaModule,
     controlPrismaModule,
@@ -94,7 +93,6 @@ async function main(): Promise<void> {
     acquisitionModule,
     backlogTelemetryModule,
   ] = await Promise.all([
-    import('../../src/lib/atsAcquisitionLoop'),
     import('../../src/lib/pipelineState'),
     import('../../src/lib/prisma'),
     import('../../src/lib/controlPrisma'),
@@ -104,7 +102,7 @@ async function main(): Promise<void> {
     import('../../src/lib/atsAcquisition'),
     import('../../src/lib/atsBacklogTelemetry'),
   ]);
-  await compatibilityModule.assertAtsAcquisitionWriterCompatibility();
+  const compatibilityGate = await compatibilityModule.assertAtsAcquisitionWriterCompatibility();
   let coordinationLeases: Awaited<ReturnType<typeof coordinationModule.claimAtsWorkerSlots>> = [];
   let coordinationHeartbeat: ReturnType<typeof setInterval> | null = null;
   let coordinationHeartbeatInFlight: Promise<void> | null = null;
@@ -224,11 +222,13 @@ async function main(): Promise<void> {
     backlogTelemetryModule.ATS_BACKLOG_TELEMETRY_INTERVAL_MS,
   );
   try {
-    const legacyLoop = loopModule.runAtsAcquisitionLoop({
-      signal: controller.signal,
-      shouldStop: pipelineStateModule.pipelineStopRequested,
-      onProgress: (message) => send(workerMessage({ type: 'progress', message })),
-    });
+    const legacyLoop = compatibilityModule.legacyAtsWorkerShouldRun(compatibilityGate, v2RuntimeAuthorized)
+      ? import('../../src/lib/atsAcquisitionLoop').then(loopModule => loopModule.runAtsAcquisitionLoop({
+          signal: controller.signal,
+          shouldStop: pipelineStateModule.pipelineStopRequested,
+          onProgress: (message) => send(workerMessage({ type: 'progress', message })),
+        }))
+      : Promise.resolve({ reason: 'stop-requested' as const });
     const result = v2RuntimeAuthorized
       ? await Promise.all([
           legacyLoop,

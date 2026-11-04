@@ -13,6 +13,7 @@ export type AtsAcquisitionRuntimeGateState = {
   compatibilityWriterVersion: number;
   v2AuthorityActivatedAt: Date | null;
   activatedLedgerVersion: number | null;
+  legacyAcquisitionRetiredAt?: Date | null;
 };
 
 export function validateAtsAcquisitionWriterCompatibility(
@@ -48,6 +49,7 @@ export async function assertAtsAcquisitionWriterCompatibility(): Promise<AtsAcqu
       compatibilityWriterVersion: true,
       v2AuthorityActivatedAt: true,
       activatedLedgerVersion: true,
+      legacyAcquisitionRetiredAt: true,
     },
   });
   const validation = validateAtsAcquisitionWriterCompatibility(gate);
@@ -76,4 +78,10 @@ export async function assertAtsV2AuthorityActive(): Promise<AtsAcquisitionRuntim
   const validation = validateAtsV2AuthorityActive(gate);
   if (!validation.valid) throw new Error(validation.reason);
   return gate;
+}
+
+export function legacyAtsWorkerShouldRun(gate: AtsAcquisitionRuntimeGateState, v2RuntimeAuthorized: boolean): boolean {
+  if (!gate.legacyAcquisitionRetiredAt) return true;
+  if (!v2RuntimeAuthorized) throw new Error('The legacy API worker is retired; enable the authorized v2 dispatcher before acquisition can run.');
+  return false;
 }

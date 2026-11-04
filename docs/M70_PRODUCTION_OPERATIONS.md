@@ -184,6 +184,11 @@ continue remains intact, and this change does not bulk-edit existing cards.
 
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 
+The remaining legacy API acquisition loop has a separate, explicit
+[retirement procedure](ATS_LEGACY_WORKER_RETIREMENT.md). Its migration is dormant
+until the guarded retirement command runs after release verification. It does
+not retire the ADP/public HTTP/browser collectors or rewrite retained work.
+
 ### Reconciling the four-day API rotation
 
 Healthy API boards use a four-day calendar rotation in America/Chicago. Browser

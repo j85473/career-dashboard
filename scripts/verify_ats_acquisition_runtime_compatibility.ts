@@ -13,6 +13,7 @@ async function main() {
     compatibilityWriterVersion: gate.compatibilityWriterVersion,
     v2AuthorityActivatedAt: gate.v2AuthorityActivatedAt?.toISOString() || null,
     activatedLedgerVersion: gate.activatedLedgerVersion,
+    legacyAcquisitionRetiredAt: gate.legacyAcquisitionRetiredAt?.toISOString() || null,
   }));
 }
 

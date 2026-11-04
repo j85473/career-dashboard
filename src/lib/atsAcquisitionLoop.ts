@@ -1,4 +1,5 @@
 import type { Prisma } from './prismaClient';
+import { prisma } from './prisma';
 
 import {
   claimDueIngestionTask,
@@ -277,6 +278,13 @@ export async function runAtsAcquisitionLoop(
   } : {};
 
   while (!await stopped()) {
+    const retirement = await prisma.atsAcquisitionRuntimeGate.findUnique({
+      where: { id: 'global' }, select: { legacyAcquisitionRetiredAt: true },
+    });
+    if (retirement?.legacyAcquisitionRetiredAt) {
+      progress('The legacy API acquisition worker is retired; v2 owns new API work.');
+      return { reason: 'stop-requested' };
+    }
     if (ATS_ACQUISITION_V2_ENABLED) {
       const promoted = await promoteDrainedLegacyBoardsToV2();
       if (promoted.count > 0) {
