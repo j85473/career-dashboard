@@ -4,8 +4,13 @@ set -Eeuo pipefail
 REV=${1:?Commit required}
 MODE=${2:-normal}
 FORCE_PREDEPLOY_BACKUP=${3:-0}
+EXISTING_PREDEPLOY_BACKUP=${4:-}
 [[ $MODE == normal || $MODE == maintenance ]] || exit 2
 [[ $FORCE_PREDEPLOY_BACKUP == 0 || $FORCE_PREDEPLOY_BACKUP == 1 ]] || exit 2
+if [[ -n $EXISTING_PREDEPLOY_BACKUP ]]; then
+ [[ $EXISTING_PREDEPLOY_BACKUP =~ ^predeploy-[0-9]{8}T[0-9]{6}Z\.dump$ ]] || exit 2
+ (( FORCE_PREDEPLOY_BACKUP == 0 )) || exit 2
+fi
 [[ $REV =~ ^[a-f0-9]{40}$ ]]
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 STAGE=/opt/career-dashboard-releases/$REV
@@ -18,6 +23,14 @@ flock -n 9 || { echo 'Another release is active'; exit 1; }
 # than switching its source release or spending the space it already reserved.
 exec 8>"$SHARED/backup.lock"
 flock -w 2700 8 || { echo 'Backup still owns storage; release refused'; exit 1; }
+# Only an explicitly selected completed archive can replace this release's backup.
+# Check it while holding the backup lock and before stopping any live services.
+if [[ -n $EXISTING_PREDEPLOY_BACKUP ]]; then
+ EXISTING_BACKUP_PATH="$SHARED/backups/$EXISTING_PREDEPLOY_BACKUP"
+ [[ -f $EXISTING_BACKUP_PATH && ! -L $EXISTING_BACKUP_PATH && -s $EXISTING_BACKUP_PATH ]] || { echo 'Selected backup is missing, empty, or a symlink.' >&2; exit 1; }
+ pg_restore --list "$EXISTING_BACKUP_PATH" > /dev/null
+ echo "Operator selected existing recovery point: $EXISTING_PREDEPLOY_BACKUP"
+fi
 python3 "$STAGE/scripts/deployment/m70-storage.py" cleanup --apply --deploy-lock-held --protect-release "$REV"
 python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity --extra-bytes 5368709120
 touch "$STAGE/.m70-activation-started"
@@ -229,6 +242,9 @@ cd "$STAGE"
 BACKUP_REQUIRED=1
 if (( FORCE_PREDEPLOY_BACKUP == 1 )); then
  echo 'A fresh pre-deployment database backup was explicitly requested.'
+elif [[ -n $EXISTING_PREDEPLOY_BACKUP ]]; then
+ BACKUP_REQUIRED=0
+ echo "Reusing operator-selected backup $EXISTING_PREDEPLOY_BACKUP; no new dump will be created."
 elif runuser -u career-dashboard -- node scripts/with-env.mjs npx prisma migrate status; then
  BACKUP_REQUIRED=0
  echo 'Database schema already matches this release; skipping the pre-deployment backup.'
@@ -240,7 +256,7 @@ if (( BACKUP_REQUIRED == 1 )); then
  python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity --extra-backup
 fi
 systemctl stop career-dashboard.service
-# A fresh recovery point precedes every pending or uncertain schema migration.
+# A fresh or explicitly selected recovery point precedes schema migration.
 # Failed migrations never restore old database data automatically.
 if (( BACKUP_REQUIRED == 1 )); then
  runuser -u career-dashboard -- node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$SHARED/backups/predeploy-$(date -u +%Y%m%dT%H%M%SZ).dump"

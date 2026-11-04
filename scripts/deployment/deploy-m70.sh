@@ -8,6 +8,11 @@ case "${FORCE_PREDEPLOY_BACKUP:-0}" in
   0|false|FALSE|'') FORCE_PREDEPLOY_BACKUP=0 ;;
   *) echo "FORCE_PREDEPLOY_BACKUP must be 0, 1, true, or false" >&2; exit 2 ;;
 esac
+EXISTING_PREDEPLOY_BACKUP="${EXISTING_PREDEPLOY_BACKUP:-}"
+if [[ -n $EXISTING_PREDEPLOY_BACKUP ]]; then
+ [[ $EXISTING_PREDEPLOY_BACKUP =~ ^predeploy-[0-9]{8}T[0-9]{6}Z\.dump$ ]] || { echo 'Existing backup must be a predeploy-YYYYMMDDTHHMMSSZ.dump filename.' >&2; exit 2; }
+ (( FORCE_PREDEPLOY_BACKUP == 0 )) || { echo 'Cannot request both a fresh backup and an existing backup.' >&2; exit 2; }
+fi
 REMOTE=j85473@100.107.116.123
 REV=$(git rev-parse HEAD)
 [[ $REV =~ ^[a-f0-9]{40}$ ]]
@@ -18,4 +23,4 @@ git archive HEAD | ssh "$REMOTE" "sudo -n tar -xf - -C '$STAGE'"
 if [[ -n ${RAPIDAPI_KEYS:-} ]]; then
  printf '%s' "$RAPIDAPI_KEYS" | ssh "$REMOTE" "sudo -n /usr/local/bin/node '$STAGE/scripts/deployment/rapidapi-key-env.mjs' apply /etc/career-dashboard/runtime.env && sudo -n chown root:career-dashboard /etc/career-dashboard/runtime.env && sudo -n chmod 640 /etc/career-dashboard/runtime.env"
 fi
-ssh "$REMOTE" "sudo -n bash '$STAGE/scripts/deployment/activate-m70.sh' '$REV' '$ACTIVATION_MODE' '$FORCE_PREDEPLOY_BACKUP'"
+ssh "$REMOTE" "sudo -n bash '$STAGE/scripts/deployment/activate-m70.sh' '$REV' '$ACTIVATION_MODE' '$FORCE_PREDEPLOY_BACKUP' '$EXISTING_PREDEPLOY_BACKUP'"

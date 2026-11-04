@@ -11,6 +11,11 @@ on:
         required: false
         default: false
         type: boolean
+      existing_predeploy_backup:
+        description: 'Explicitly reuse this completed predeploy-YYYYMMDDTHHMMSSZ.dump on M70 instead of taking a fresh backup'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: "deploy-m70"
@@ -69,6 +74,7 @@ jobs:
         env:
           ACTIVATION_MODE: ${{ vars.PI_ACTIVATION_MODE || 'normal' }}
           FORCE_PREDEPLOY_BACKUP: ${{ inputs.force_predeploy_backup && '1' || vars.M70_FORCE_PREDEPLOY_BACKUP || '0' }}
+          EXISTING_PREDEPLOY_BACKUP: ${{ inputs.existing_predeploy_backup || '' }}
           RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
         run: |
           test -n "$RAPIDAPI_KEYS" || { echo 'Deployment requires canonical RAPIDAPI_KEYS'; exit 1; }

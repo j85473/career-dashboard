@@ -69,6 +69,29 @@ test('an operator can force a fresh recovery point for a risky code-only release
   assert.match(activation, /fresh pre-deployment database backup was explicitly requested/);
 });
 
+test('an existing recovery point is an explicit per-run choice checked before services stop', () => {
+  assert.match(workflow, /existing_predeploy_backup:/);
+  assert.match(workflow, /EXISTING_PREDEPLOY_BACKUP: \$\{\{ inputs\.existing_predeploy_backup \|\| '' \}\}/);
+  assert.doesNotMatch(workflow, /vars\.M70_.*EXISTING.*BACKUP/);
+  const validation = activation.indexOf('pg_restore --list "$EXISTING_BACKUP_PATH"');
+  assert.ok(validation > activation.indexOf('flock -w 2700 8'));
+  assert.ok(validation < activation.indexOf('systemctl stop career-dashboard-scheduler.timer'));
+  assert.match(activation, /-f \$EXISTING_BACKUP_PATH && ! -L \$EXISTING_BACKUP_PATH && -s \$EXISTING_BACKUP_PATH/);
+  assert.match(activation, /elif \[\[ -n \$EXISTING_PREDEPLOY_BACKUP \]\]; then\n BACKUP_REQUIRED=0/);
+  for (const name of ['../predeploy-20261104T150523Z.dump', "predeploy-20261104T150523Z.dump'; exit 0; #", '/tmp/backup.dump']) {
+    const result = spawnSync('bash', ['scripts/deployment/deploy-m70.sh'], {
+      env: { ...process.env, EXISTING_PREDEPLOY_BACKUP: name, FORCE_PREDEPLOY_BACKUP: '0' }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /Existing backup must be/);
+  }
+  const conflict = spawnSync('bash', ['scripts/deployment/deploy-m70.sh'], {
+    env: { ...process.env, EXISTING_PREDEPLOY_BACKUP: 'predeploy-20261104T150523Z.dump', FORCE_PREDEPLOY_BACKUP: '1' }, encoding: 'utf8',
+  });
+  assert.equal(conflict.status, 2);
+  assert.match(conflict.stderr, /Cannot request both/);
+});
+
 test('the independent nightly backup remains the routine recovery copy', () => {
   assert.match(scheduledBackupTimer, /OnCalendar=\*-\*-\* 03:15:00/);
   assert.match(scheduledBackupTimer, /Persistent=true/);

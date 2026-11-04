@@ -221,6 +221,16 @@ The web unit supervises Next.js directly rather than through npm. The first prod
 
 The acquisition unit also supervises its Node process directly. Forwarding signals through the environment wrapper while systemd signaled the whole process group delivered SIGTERM twice, killing the child before its capacity cleanup completed. Runtime configuration comes from the unit's environment files. Deployment additionally releases expired capacity reservations with an atomic expiry predicate; live reservations, fencing counters, work receipts and checkpoints remain intact, and the full quiescence gate still applies.
 
+For an explicitly authorized reuse of a completed backup, manually dispatch
+**Deploy to M70** with `existing_predeploy_backup` set to its exact filename,
+such as `predeploy-20261104T150523Z.dump`. This is a per-run choice, with no
+persistent variable or automatic age-based reuse. The selected archive must
+be a nonempty regular file in the M70 predeployment backup directory, and
+`pg_restore --list` must read its catalog before live services are stopped.
+It cannot be combined with a forced fresh backup. Recovery would use that
+earlier snapshot; installing the release never restores it over current data.
+Without this input, pending or uncertain migrations still take a fresh backup.
+
 ## Backups and recovery
 
 ### Deduplicated recovery points (October 28, 2026)
