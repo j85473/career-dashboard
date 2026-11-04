@@ -220,11 +220,7 @@ curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mo
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.
 for unit in career-dashboard-first-collections.service career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-rotation-balance.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-api.service career-dashboard-canonical-resolver.service career-dashboard-gusto.service career-dashboard-public-boards.service career-dashboard-public-http.service; do
- for ((i=0;i<120;i++)); do
-  systemctl is-active --quiet "$unit" || break
-  sleep 5
- done
- ! systemctl is-active --quiet "$unit"
+ bash "$STAGE/scripts/deployment/wait-unit-idle.sh" "$unit"
 done
 cd "$APP"
 QUIET=0

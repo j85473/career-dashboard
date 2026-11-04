@@ -258,6 +258,12 @@ It cannot be combined with a forced fresh backup. Recovery would use that
 earlier snapshot; installing the release never restores it over current data.
 Without this input, pending or uncertain migrations still take a fresh backup.
 
+Before checking database leases, activation waits for each bounded background
+service to become inactive or failed. A systemd one-shot service remains
+`activating` while its command runs; `systemctl is-active` returning nonzero
+does not prove that crawler has finished. Starting, stopping, and reloading
+states keep the wait active. An unreadable or unknown state blocks the release.
+
 ## Backups and recovery
 
 ### Deduplicated recovery points (October 28, 2026)
