@@ -3,12 +3,30 @@
 import { useState, useSyncExternalStore } from 'react';
 import { CalendarDays } from 'lucide-react';
 import type { JobInterviewItem, JobListItem } from '@/types/job';
-import { interviewLocalInput } from '@/lib/jobInterviewSchedule';
+import { INTERVIEW_LABEL_MAX_LENGTH, interviewLocalInput } from '@/lib/jobInterviewSchedule';
 import { showConfirm } from '@/lib/modal';
 
 const subscribeTimezone = () => () => {};
 const browserTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 const serverTimezone = () => 'UTC';
+
+function InterviewNotes({ text }: { text: string }) {
+  return text.split(/(https?:\/\/[^\s<>"']+)/gi).map((part, index) => {
+    if (!/^https?:\/\//i.test(part)) return part;
+    let href = part.replace(/[.,;:!?]+$/, '');
+    // Leave sentence punctuation outside the link without damaging URL parentheses.
+    for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+      while (href.endsWith(close) && href.split(close).length > href.split(open).length) {
+        href = href.slice(0, -1);
+      }
+    }
+    try { new URL(href); } catch { return part; }
+    return <span key={index}>
+      <a href={href} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>{href}</a>
+      {part.slice(href.length)}
+    </span>;
+  });
+}
 
 export function InterviewSchedule({ job, onJobUpdate }: {
   job: JobListItem;
@@ -64,7 +82,7 @@ export function InterviewSchedule({ job, onJobUpdate }: {
       {interviews.map(item => (
         <div className="interview-schedule-round" key={item.id}>
           <div>
-            <span className="interview-round-label">{item.label || 'Interview'}</span>
+            <span className="interview-round-label"><InterviewNotes text={item.label || 'Interview'} /></span>
             <time dateTime={item.scheduledAt}>{new Intl.DateTimeFormat(undefined, {
               weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
               hour: 'numeric', minute: '2-digit', timeZoneName: 'short', timeZone: timezone,
@@ -80,8 +98,8 @@ export function InterviewSchedule({ job, onJobUpdate }: {
           event.preventDefault();
           void save(editing === 'new' ? 'POST' : 'PATCH', editing === 'new' ? undefined : editing);
         }}>
-          <label>Round or interviewer (optional)
-            <input value={label} maxLength={100} disabled={busy} placeholder="e.g. Hiring manager" onChange={event => setLabel(event.target.value)} />
+          <label>Round, interviewer, or notes (optional)
+            <textarea value={label} maxLength={INTERVIEW_LABEL_MAX_LENGTH} rows={3} disabled={busy} placeholder="e.g. Hiring manager, notes, and meeting link" onChange={event => setLabel(event.target.value)} />
           </label>
           <label>Interview date and time
             <input type="datetime-local" required value={date} disabled={busy} onChange={event => setDate(event.target.value)} />

@@ -1,6 +1,8 @@
 type ScheduledInterview = { scheduledAt: string | Date };
 type InterviewJob = { id: string; interviews?: readonly ScheduledInterview[] };
 
+export const INTERVIEW_LABEL_MAX_LENGTH = 4000;
+
 /** Next scheduled round, or the most recent past round when none are upcoming. */
 export function interviewSortKey(job: InterviewJob, now: number): [number, number] {
   const dates = (job.interviews || []).map(item => new Date(item.scheduledAt).getTime()).filter(Number.isFinite);
@@ -31,8 +33,8 @@ export function parseInterviewInput(body: unknown): { scheduledAt: Date; label: 
     || calendarDate.getUTCDate() !== day || Number(scheduledAt.slice(11, 13)) > 23) {
     throw new Error('Enter a valid interview date and time with a timezone.');
   }
-  if (typeof label !== 'string' || label.trim().length > 100) {
-    throw new Error('Keep the interview label to 100 characters or fewer.');
+  if (typeof label !== 'string' || label.trim().length > INTERVIEW_LABEL_MAX_LENGTH) {
+    throw new Error('Keep the interview notes to 4,000 characters or fewer.');
   }
   return { scheduledAt: new Date(scheduledAt), label: label.trim() };
 }

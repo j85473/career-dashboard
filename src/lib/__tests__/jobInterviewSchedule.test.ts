@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compareInterviewJobs, parseInterviewInput, interviewLocalInput } from '../jobInterviewSchedule';
+import { compareInterviewJobs, parseInterviewInput, interviewLocalInput, INTERVIEW_LABEL_MAX_LENGTH } from '../jobInterviewSchedule';
 import { interviewOrderedPage } from '../jobInterviewOrder';
 import { defaultJobSort } from '../jobSort';
 
@@ -34,13 +34,15 @@ test('interview ordering is applied before page boundaries and retains the searc
   assert.deepEqual(await interviewOrderedPage(where, 2, 6, client, now), { ids: [], total: 6 });
 });
 
-test('interview input requires an absolute time and a short optional label', () => {
+test('interview input requires an absolute time and accepts notes with long meeting links', () => {
   const parsed = parseInterviewInput({ scheduledAt: '2026-11-04T09:00:00-06:00', label: '  Recruiter  ' });
   assert.equal(parsed.scheduledAt.toISOString(), '2026-11-04T15:00:00.000Z');
   assert.equal(parsed.label, 'Recruiter');
+  const notes = `Hiring manager\nhttps://teams.microsoft.com/l/meetup-join/${'a'.repeat(500)}?context=test`;
+  assert.equal(parseInterviewInput({ scheduledAt: '2026-11-04T15:00:00Z', label: notes }).label, notes);
   for (const body of [null, {}, { scheduledAt: '2026-11-04T09:00' }, { scheduledAt: 'nonsense' },
     { scheduledAt: '2026-02-30T15:00:00Z' }, { scheduledAt: '2026-11-04T24:00:00Z' },
-    { scheduledAt: '2026-11-04T15:00:00Z', label: 'x'.repeat(101) }]) {
+    { scheduledAt: '2026-11-04T15:00:00Z', label: 'x'.repeat(INTERVIEW_LABEL_MAX_LENGTH + 1) }]) {
     assert.throws(() => parseInterviewInput(body));
   }
   const local = new Date(2026, 10, 4, 9, 30);
