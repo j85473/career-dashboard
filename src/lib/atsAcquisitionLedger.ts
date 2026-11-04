@@ -28,7 +28,8 @@ import { atsRotationCohortWhere, atsRotationCohortSql } from './atsRotationCohor
 import { isAtsBoardInRotationCohort, nextAtsBoardCheckDateForBoard, apiRotationDayFor as rotationDayFor } from './atsRotation';
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from './atsContinuationCapacity';
 import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
-import { atsListingAdmissionReservationSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';
+import { atsListingAdmissionReservationSql, atsSegmentPersistenceCapacitySql } from './atsAdmissionCapacity';
+import { ATS_EMPLOYER_VERIFICATION_HOLD_REASONS, isAtsEmployerVerificationHold, type AtsEmployerRetryMode } from './atsEmployerRetry';
 export { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK } from './atsAcquisitionPressure';
 
 type JsonObject = Record<string, unknown>;
@@ -246,6 +247,7 @@ export type AtsLedgerPageCommit = {
 };
 
 export type PrefetchedAtsSegment = {
+  employerVerificationRetry?: boolean;
   handoffKind: 'ledger_segment';
   id: string;
   sourceBatchId: string;
@@ -1931,19 +1933,18 @@ export async function sealReadyAtsV2Segments(input: {
  * Publication reserves space for runnable persistence work. A published segment
  * waiting for its retry keeps its status, payload, counters and place in the
  * total backlog, but cannot consume that allowance until its hold expires.
+ * Due employer-verification retries share a bounded recovery reservation.
  * Processing segments always count, including expired leases awaiting reclaim.
  * The separate staging gate continues to bound new network acquisition.
  * Prisma binds the clock as timestamptz; retry columns store UTC without a
  * timezone. Convert explicitly so a Chicago session cannot add five hours.
  */
-export async function atsV2RunnablePersistenceBacklog(
+export async function atsV2PersistenceCapacityBacklog(
   transaction: Pick<AtsLedgerTransaction, '$queryRaw'> | typeof prisma = prisma,
   now = new Date(),
 ): Promise<number> {
   const rows = await transaction.$queryRaw<Array<{ remaining: bigint | number | string }>>(Prisma.sql`
-    SELECT COALESCE(SUM(GREATEST(segment."itemCount" - segment."processingOffset", 0)), 0) AS remaining
-      FROM "AtsIngestionSegment" segment
-     WHERE ${atsRunnableSegmentSql(now)}
+    ${atsSegmentPersistenceCapacitySql(now)}
   `);
   return Number(rows[0]?.remaining || 0);
 }
@@ -2006,7 +2007,7 @@ export async function publishReadyAtsV2Segments(input: {
   const maximum = Math.max(1, Math.min(10, Math.floor(input.maxSegments || 10)));
   return runLedgerTransaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(912837465)`;
-    let remainingJobs = await atsV2RunnablePersistenceBacklog(transaction, now);
+    let remainingJobs = await atsV2PersistenceCapacityBacklog(transaction, now);
     const gate = await transaction.atsAcquisitionRuntimeGate.findUniqueOrThrow({
       where: { id: 'global' },
       select: {
@@ -2081,21 +2082,36 @@ function mergeAtsLedgerItem(rawJson: Prisma.JsonValue | null, overlay: Prisma.Js
   return { ...jsonObject(rawJson), ...jsonObject(overlay) };
 }
 
-export async function claimNextAtsV2Segment(now = new Date()): Promise<PrefetchedAtsSegment | null> {
-  const candidate = await prisma.atsIngestionSegment.findFirst({
-    where: {
-      OR: [
-        { status: 'published', OR: [{ nextProcessAt: null }, { nextProcessAt: { lte: now } }] },
-        { status: 'processing', leaseExpiresAt: { lte: now } },
-      ],
-    },
-    orderBy: [
-      { nextProcessAt: { sort: 'asc', nulls: 'first' } },
-      { publishedAt: 'asc' },
-      { createdAt: 'asc' },
+export async function claimNextAtsV2Segment(
+  now = new Date(), employerRetryMode: AtsEmployerRetryMode = 'fallback',
+): Promise<PrefetchedAtsSegment | null> {
+  const eligible: Prisma.AtsIngestionSegmentWhereInput = {
+    OR: [
+      { status: 'published', OR: [{ nextProcessAt: null }, { nextProcessAt: { lte: now } }] },
+      { status: 'processing', leaseExpiresAt: { lte: now } },
     ],
-    select: { id: true },
-  });
+  };
+  const recovery: Prisma.AtsIngestionSegmentWhereInput = {
+    holdReason: { in: ATS_EMPLOYER_VERIFICATION_HOLD_REASONS },
+  };
+  const ordinary: Prisma.AtsIngestionSegmentWhereInput = {
+    OR: [{ holdReason: null }, { holdReason: { notIn: ATS_EMPLOYER_VERIFICATION_HOLD_REASONS } }],
+  };
+  const groups = employerRetryMode === 'prefer' ? [recovery, ordinary]
+    : employerRetryMode === 'exclude' ? [ordinary] : [ordinary, recovery];
+  let candidate: { id: string } | null = null;
+  for (const group of groups) {
+    candidate = await prisma.atsIngestionSegment.findFirst({
+      where: { AND: [eligible, group] },
+      orderBy: [
+        { nextProcessAt: { sort: 'asc', nulls: 'first' } },
+        { publishedAt: 'asc' },
+        { createdAt: 'asc' },
+      ],
+      select: { id: true },
+    });
+    if (candidate) break;
+  }
   if (!candidate) return null;
   const leaseToken = randomUUID();
   const claimed = await prisma.atsIngestionSegment.updateMany({
@@ -2162,6 +2178,7 @@ export async function claimNextAtsV2Segment(now = new Date()): Promise<Prefetche
   );
   return {
     handoffKind: 'ledger_segment',
+    employerVerificationRetry: isAtsEmployerVerificationHold(segment.holdReason),
     id: segment.id,
     sourceBatchId: segment.batchId,
     slug: segment.batch.slug,

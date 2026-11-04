@@ -1,6 +1,6 @@
 import { Prisma } from './prismaClient';
 import { TENANT_ATS_PLATFORMS, AtsFirstCollectionSizeError } from './tenantAtsBoards';
-import { atsRunnableLegacyBatchSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';
+import { atsRunnableLegacyBatchSql, atsRunnableSegmentSql, atsSegmentPersistenceCapacitySql } from './atsAdmissionCapacity';
 
 export const FIRST_COLLECTION_PLATFORMS = ['symphony', 'zohorecruit', ...TENANT_ATS_PLATFORMS] as const;
 export const isFirstCollectionPlatform = (platform: string): boolean =>
@@ -138,8 +138,7 @@ export async function firstCollectionHealth(client: Pick<Client, '$queryRaw'>, r
         FROM "AtsIngestionBatch" WHERE "writerMode"='v2' AND status IN ('fetching','partial','synchronized')),0)::bigint AS items,
       COALESCE((SELECT SUM("acquisitionBytes") FROM "AtsIngestionBatch"
         WHERE "writerMode"='v2' AND status IN ('fetching','partial','synchronized')),0)::bigint AS bytes,
-      (COALESCE((SELECT SUM(GREATEST(segment."itemCount"-segment."processingOffset",0)) FROM "AtsIngestionSegment" segment
-        WHERE ${atsRunnableSegmentSql(now)}),0)
+      (COALESCE((${atsSegmentPersistenceCapacitySql(now)}),0)
        + COALESCE((SELECT SUM(GREATEST(batch."jobCount"-batch."processingOffset",0)) FROM "AtsIngestionBatch" batch
         WHERE ${atsRunnableLegacyBatchSql(now)}),0))::bigint AS persistence,
       (COALESCE((SELECT SUM(GREATEST("itemCount"-"processingOffset",0)) FROM "AtsIngestionSegment"

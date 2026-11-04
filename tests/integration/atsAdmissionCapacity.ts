@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { Prisma, PrismaClient } from '../../src/lib/prismaClient';
-import { atsV2StagingSnapshot, atsV2RunnablePersistenceBacklog } from '../../src/lib/atsAcquisitionLedger';
+import { atsV2StagingSnapshot, atsV2PersistenceCapacityBacklog } from '../../src/lib/atsAcquisitionLedger';
 import { publicCrawlCapacity } from '../../src/lib/publicCrawlCapacity';
 import { firstCollectionHealth } from '../../src/lib/atsFirstCollectionAdmission';
 import { assertPrismaRehearsalUrl } from '../../src/lib/prismaRehearsal';
@@ -42,7 +42,7 @@ const fixtures = `
 ),
 "AtsCompany" AS (SELECT 'fixture'::text AS slug,'workday'::text AS platform,'active'::text AS status,0 AS "checkDay"),
 "AtsIngestionSegment" AS (
-  SELECT state AS status,items AS "itemCount",offset_ AS "processingOffset",retry AS "nextProcessAt"
+  SELECT state AS status,items AS "itemCount",offset_ AS "processingOffset",retry AS "nextProcessAt",NULL::text AS "holdReason"
   FROM (VALUES ('published',100,0,TIMESTAMP '2026-10-11 16:00'),
     ('published',50,0,NULL::timestamp),('published',2000,0,TIMESTAMP '2026-10-11 18:00'),
     ('processing',25,0,TIMESTAMP '2026-10-11 18:00'),
@@ -50,6 +50,20 @@ const fixtures = `
     ('published',10,10,NULL::timestamp)) AS cases(state,items,offset_,retry)
 ),
 "AtsAcquisitionRuntimeGate" AS (SELECT 'global'::text AS id,'open'::text AS "admissionState")`;
+
+const employerFixtures = fixtures.replace('"AtsIngestionSegment" AS (', '"OrdinaryAtsIngestionSegment" AS (') + `,
+"AtsIngestionSegment" AS (
+  SELECT * FROM "OrdinaryAtsIngestionSegment"
+  UNION ALL
+  SELECT state,items,0,retry,reason FROM (VALUES
+    ('published',2000,TIMESTAMP '2026-10-11 16:00','oracle downloaded work awaits a verified employer'),
+    ('published',2000,TIMESTAMP '2026-10-11 16:00','ukg downloaded work awaits a verified employer'),
+    ('published',2000,TIMESTAMP '2026-10-11 18:00','oracle downloaded work awaits a verified employer'),
+    ('processing',25,TIMESTAMP '2026-10-11 16:00','oracle downloaded work awaits a verified employer'),
+    ('processing',25,TIMESTAMP '2026-10-11 18:00','ukg downloaded work awaits a verified employer'),
+    ('published',25,TIMESTAMP '2026-10-11 16:00','Connection failed or provider timed out')
+  ) AS cases(state,items,retry,reason)
+)`;
 
 function render(query: Prisma.Sql) {
   return query.text.replace(/\$(\d+)/g, (_, index) => {
@@ -71,7 +85,7 @@ async function capture(run: (client: never) => Promise<unknown>) {
 async function main() {
   const publicHealth = await capture(client => publicCrawlCapacity(client, now));
   const pressure = await capture(client => atsV2StagingSnapshot(client, now));
-  const persistence = await capture(client => atsV2RunnablePersistenceBacklog(client, now));
+  const persistence = await capture(client => atsV2PersistenceCapacityBacklog(client, now));
   const health = await capture(client => firstCollectionHealth(client, 250, 5242880, now));
   const dueHealth = await capture(client => firstCollectionHealth(client, 250, 5242880, new Date('2026-10-11T18:00:00Z')));
   const telemetryPressure = Prisma.sql`SELECT COUNT(*) FILTER (
@@ -84,25 +98,29 @@ async function main() {
     if (!bound) console.log("BEGIN READ ONLY; SET LOCAL statement_timeout='10s';");
     for (const zone of ['UTC','America/Chicago']) {
       if (!bound) console.log(`SET LOCAL TIME ZONE '${zone}';`);
-      for (const [label, query, expected] of [
+      for (const [label, query, expected, fixture = fixtures] of [
         ['public crawlers use runnable persistence independently of staged listings',publicHealth,"persistence=305 AND gate='open'"],
         ['failed downloads retained; only productive due listings and live claims reserve capacity',pressure,'items=1080 AND "unfinishedListings"=4 AND "cohortUnfinishedListings"=0'],
         ['publication counts due segments and every processing segment',persistence,'remaining=195'],
         ['pilot capacity excludes future holds, including legacy, while reporting all retained work',health,'items=1080 AND persistence=305 AND "totalPersistence"=4305'],
         ['held work consumes pilot capacity exactly when its retry becomes due',dueHealth,'persistence=4305 AND "totalPersistence"=4305'],
         ['operator telemetry applies the same rule using its statement UTC clock',telemetryPressure,'reservations=4'],
+        ['thousands of due employer retries reserve only 100 jobs; every processing segment and ordinary error counts fully',persistence,'remaining=370',employerFixtures],
+        ['public crawlers remain open behind a large employer retry backlog',publicHealth,"persistence=480 AND gate='open'",employerFixtures],
+        ['pilot capacity retains the full employer backlog separately from its bounded recovery allowance',health,'persistence=480 AND "totalPersistence"=10380',employerFixtures],
+        ['another employer retry wave cannot crowd out ordinary work when its hold expires',dueHealth,'persistence=4480 AND "totalPersistence"=10380',employerFixtures],
       ] as const) {
         if (prisma) {
           await prisma.$transaction(async tx => {
             await tx.$executeRaw`SET TRANSACTION READ ONLY`;
             await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE '${zone}'`);
             const rows = await tx.$queryRaw<Array<{ passed: boolean }>>(Prisma.sql`
-              WITH ${Prisma.raw(fixtures)}, result AS (${query})
+              WITH ${Prisma.raw(fixture)}, result AS (${query})
               SELECT (${Prisma.raw(expected)}) AS passed FROM result`);
             assert.deepEqual(rows, [{ passed: true }], `${zone}: ${label}`);
           });
           console.log(`PASS bound Prisma parameters: ${zone}: ${label}`);
-        } else console.log(`WITH ${fixtures}, result AS (${render(query)}) SELECT '${zone}: ${label}' AS fixture, 1/((${expected})::int) AS passed FROM result;`);
+        } else console.log(`WITH ${fixture}, result AS (${render(query)}) SELECT '${zone}: ${label}' AS fixture, 1/((${expected})::int) AS passed FROM result;`);
       }
     }
     if (!bound) console.log('ROLLBACK;');

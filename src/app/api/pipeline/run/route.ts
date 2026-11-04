@@ -109,6 +109,7 @@ import {
   readAtsDistributedTelemetry,
 } from '@/lib/atsDistributedTelemetry';
 import { readAtsOperatorBacklogSnapshot } from '@/lib/atsBacklogTelemetry';
+import { createAtsEmployerRetryClaimer } from '@/lib/atsEmployerRetry';
 import { formatAtsBoardCollectionTelemetry, readAtsBoardCollectionTelemetry } from '@/lib/atsBoardCollectionTelemetry';
 import {
   ATS_ACQUISITION_JOB_HIGH_WATERMARK,
@@ -340,15 +341,16 @@ async function orchestratePipeline(releaseLock: () => void) {
         }
       }
       let preferV2Segment = true;
+      const claimNextV2Segment = createAtsEmployerRetryClaimer(claimNextAtsV2Segment);
       const claimNextHandoff = async (): Promise<PrefetchedAtsBatch | PrefetchedAtsSegment | null> => {
         if (!v2SegmentConsumerAuthorized) return claimNextAtsIngestionBatch();
         const first = preferV2Segment
-          ? await claimNextAtsV2Segment()
+          ? await claimNextV2Segment()
           : await claimNextAtsIngestionBatch();
         preferV2Segment = !preferV2Segment;
         if (first) return first;
         return preferV2Segment
-          ? await claimNextAtsV2Segment()
+          ? await claimNextV2Segment()
           : await claimNextAtsIngestionBatch();
       };
       while (true) {

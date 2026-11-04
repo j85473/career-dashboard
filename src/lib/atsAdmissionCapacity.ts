@@ -1,4 +1,5 @@
 import { Prisma } from './prismaClient';
+import { ATS_EMPLOYER_RETRY_CAPACITY_JOBS, atsEmployerVerificationHoldSql } from './atsEmployerRetry';
 
 // Prisma 7's pg adapter removes the offset from Date parameters. Bind an ISO
 // string when SQL needs an instant so Chicago sessions cannot add five hours.
@@ -26,6 +27,21 @@ export function atsRunnableSegmentSql(now: Date): Prisma.Sql {
     OR (segment.status = 'published'
       AND (segment."nextProcessAt" IS NULL
         OR segment."nextProcessAt" <= (${now.toISOString()}::timestamptz AT TIME ZONE 'UTC')))`;
+}
+
+/** Every in-flight segment and ordinary due item consumes its full allowance.
+ * Known employer-evidence retries share a bounded reservation, even when many
+ * hourly holds expire together. All items remain runnable and visible in the
+ * total backlog; this changes only the capacity reserved for recovery work.
+ */
+export function atsSegmentPersistenceCapacitySql(now: Date): Prisma.Sql {
+  const recovery = Prisma.sql`(segment.status = 'published' AND ${atsEmployerVerificationHoldSql()})`;
+  return Prisma.sql`SELECT
+    COALESCE(SUM(GREATEST(segment."itemCount" - segment."processingOffset", 0))
+      FILTER (WHERE NOT ${recovery}), 0)
+    + LEAST(COALESCE(SUM(GREATEST(segment."itemCount" - segment."processingOffset", 0))
+      FILTER (WHERE ${recovery}), 0), ${ATS_EMPLOYER_RETRY_CAPACITY_JOBS}) AS remaining
+    FROM "AtsIngestionSegment" segment WHERE ${atsRunnableSegmentSql(now)}`;
 }
 
 export function atsRunnableLegacyBatchSql(now: Date): Prisma.Sql {

@@ -1,13 +1,12 @@
 import { Prisma } from './prismaClient';
-import { atsRunnableLegacyBatchSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';
+import { atsRunnableLegacyBatchSql, atsSegmentPersistenceCapacitySql } from './atsAdmissionCapacity';
 
 /** Public crawlers persist bounded jobs directly; they do not append API
  * listing observations. Keep the operator gate and runnable writer pressure,
  * without charging them for another provider's unfinished catalogue. */
 export async function publicCrawlCapacity(client: Pick<Prisma.TransactionClient, '$queryRaw'>, now = new Date()) {
     const [snapshot] = await client.$queryRaw<Array<{ persistence: bigint; gate: string }>>(Prisma.sql`
-        SELECT (COALESCE((SELECT SUM(GREATEST(segment."itemCount"-segment."processingOffset",0))
-            FROM "AtsIngestionSegment" segment WHERE ${atsRunnableSegmentSql(now)}),0)
+        SELECT (COALESCE((${atsSegmentPersistenceCapacitySql(now)}),0)
           + COALESCE((SELECT SUM(GREATEST(batch."jobCount"-batch."processingOffset",0))
             FROM "AtsIngestionBatch" batch WHERE ${atsRunnableLegacyBatchSql(now)}),0))::bigint AS persistence,
           (SELECT "admissionState" FROM "AtsAcquisitionRuntimeGate" WHERE id='global') AS gate

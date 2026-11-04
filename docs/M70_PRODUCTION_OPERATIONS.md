@@ -135,6 +135,28 @@ request deadline and a bounded five-minute posting cache, and never guesses
 from tenant IDs. Missing or conflicting evidence retains the existing hold.
 Installing the change does not release holds in bulk or edit existing scores.
 
+### Employer-verification retry capacity (November 4, 2026)
+
+Known employer-evidence deferrals share a bounded recovery allowance when their
+retry dates become due. Publication, public crawling and first-collection
+admission reserve at most 100 jobs for those waiting retries (less when the
+configured resume limit is small). Every segment already processing still
+consumes its full capacity, as does every ordinary due item. Total backlog and
+due-item telemetry continue to include all retained postings.
+
+The pipeline consumer claims at most one employer-verification retry per minute
+and gives ordinary work four claims between recovery turns when it is available.
+When ordinary work is absent, recovery can use the next minute's allowance.
+Existing exact deferral reasons identify retained Oracle, UKG, Zoho and
+SuccessFactors work; other errors keep ordinary capacity accounting. Future
+retry dates, provider controls, manifest checks and lease fencing still apply.
+
+This is a scheduling change only. No saved posting, page, manifest, processing
+offset, retry date, score or lifecycle decision is reset, deleted or rewritten
+by installing it. New recovery attempts retain the existing one-hour employer
+hold if proof is still missing. Successfully completed work drains normally,
+releasing the staging bytes that currently prevent new board admissions.
+
 ### SuccessFactors discovery and ADP employer proof (November 3, 2026)
 
 SuccessFactors metadata recovery first searches its explicitly linked employer

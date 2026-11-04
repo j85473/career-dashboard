@@ -90,7 +90,7 @@ test('publisher resumes behind held records and changes only newly sealed segmen
       // the runnable allowance; 900 due/in-flight items still do.
       assert.match(query.sql, /segment\.status = 'processing'/);
       assert.match(query.sql, /segment\.status = 'published'[\s\S]*nextProcessAt" IS NULL[\s\S]*OR segment\."nextProcessAt" <= \(\?::timestamptz AT TIME ZONE 'UTC'\)/);
-      queryClock = query.values[0];
+      queryClock = query.values.find(value => value === now.toISOString());
       return [{ remaining: BigInt(900) }];
     },
     atsAcquisitionRuntimeGate: {
