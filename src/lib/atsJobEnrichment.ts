@@ -1,3 +1,4 @@
+import { createAtsDetailRequestSession, AtsDetailHttpError, AtsDetailResponseError, AtsEnrichmentControlError, isAbortError } from './atsDetailRequest';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { readPublishedAtsPostingEvidence, type AtsPostingEvidenceResponse } from './atsEmployerRecovery';
 import { publicAtsBoardSlugFromUrl, isPublicAtsPlatform } from './publicAtsBoards';
@@ -16,7 +17,7 @@ export const ATS_JOB_ENRICHMENT_KEY = '__careerDashboardAtsEnrichment';
 export const ATS_JOB_ENRICHMENT_VERSION = 1 as const;
 export const ATS_OPERATOR_RESET_ABANDONED_REASON = 'operator_reset_abandoned';
 export const ATS_INVALID_PROVIDER_RESPONSE_REASON = 'invalid_provider_response';
-export const ATS_DETAIL_QUEUE_TIMEOUT_MS = 45_000;
+export { ATS_DETAIL_QUEUE_TIMEOUT_MS } from './atsDetailRequest';
 
 export type AtsJobEnrichmentStatus = 'enriched' | 'not_needed' | 'unavailable';
 
@@ -131,24 +132,8 @@ type DetailPlan = { kind: 'employer'; fields: EnrichmentFields } | {
   transport: 'fetch' | 'safe_fetch';
   fields: EnrichmentFields;
   parse: (response: Response, dependencies: AtsJobEnrichmentDependencies) => Promise<EnrichmentFields>;
-  complete?: (dependencies: AtsJobEnrichmentDependencies) => Promise<EnrichmentFields>;
+  complete?: (fetchPage: (url: string) => Promise<Response>) => Promise<EnrichmentFields>;
 };
-
-class AtsDetailHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`ATS detail endpoint returned HTTP ${status}`);
-    this.name = 'AtsDetailHttpError';
-  }
-}
-
-/** A response for one posting is unusable, not evidence of a provider outage. */
-class AtsDetailResponseError extends Error {
-  constructor(message: string, cause?: unknown) {
-    super(message);
-    this.name = 'AtsDetailResponseError';
-    this.cause = cause;
-  }
-}
 
 async function readDetailJson(response: Response): Promise<unknown> {
   try {
@@ -163,31 +148,10 @@ async function readDetailJson(response: Response): Promise<unknown> {
   }
 }
 
-class AtsDetailProviderBlockedError extends Error {
-  constructor(
-    readonly reason: string,
-    readonly retryAt?: Date,
-  ) {
-    super(`ATS detail request blocked by ${reason}`);
-    this.name = 'AtsDetailProviderBlockedError';
-  }
-}
-
 function isJobScopedDetailAvailability(error: unknown): boolean {
   return error instanceof AtsDetailResponseError
     || (error instanceof AtsDetailHttpError
       && (error.status === 403 || error.status === 404));
-}
-
-class AtsEnrichmentControlError extends Error {
-  constructor(readonly controlError: unknown) {
-    // fetchAtsPlatformResponse classifies errors thrown by its response hook.
-    // Keep this message on the explicit internal-persistence path so a schema-
-    // worded database error cannot be mistaken for provider response drift.
-    super('ATS enrichment provider control persistence failed');
-    this.name = 'AtsEnrichmentControlError';
-    this.cause = controlError;
-  }
 }
 
 const EMPTY_FIELDS: EnrichmentFields = Object.freeze({
@@ -203,13 +167,13 @@ const EMPTY_FIELDS: EnrichmentFields = Object.freeze({
 const DEFAULT_JSON_LD_FETCH_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-let jobIngestionModulePromise: Promise<typeof import('./jobIngestion')> | null = null;
+let providerRequestModulePromise: Promise<typeof import('./atsProviderRequest')> | null = null;
 let ingestionControlModulePromise: Promise<typeof import('./ingestionControl')> | null = null;
 let atsApiModulePromise: Promise<typeof import('./atsApi')> | null = null;
 
-function loadJobIngestionModule() {
-  jobIngestionModulePromise ||= import('./jobIngestion');
-  return jobIngestionModulePromise;
+function loadProviderRequestModule() {
+  providerRequestModulePromise ||= import('./atsProviderRequest');
+  return providerRequestModulePromise;
 }
 
 function loadIngestionControlModule() {
@@ -226,7 +190,7 @@ const DEFAULT_DEPENDENCIES: AtsJobEnrichmentDependencies = {
   fetch: (input, init) => fetch(input, init),
   safeExternalFetch: (input, init) => safeExternalFetch(input, init),
   fetchPlatformResponse: async (platform, signal, request, options) => {
-    const { fetchAtsPlatformResponse } = await loadJobIngestionModule();
+    const { fetchAtsPlatformResponse } = await loadProviderRequestModule();
     return fetchAtsPlatformResponse(platform, signal, request, options);
   },
   reserveProviderBudgetForSource: async (source) => {
@@ -242,7 +206,7 @@ const DEFAULT_DEPENDENCIES: AtsJobEnrichmentDependencies = {
     return recordProviderFailure(input);
   },
   createDeferredError: async (platform, retryAt) => {
-    const { AtsPlatformDeferredError } = await loadJobIngestionModule();
+    const { AtsPlatformDeferredError } = await loadProviderRequestModule();
     return new AtsPlatformDeferredError(platform, retryAt);
   },
   verifiedBoardEmployer: async (platform, slug) => {
@@ -551,23 +515,11 @@ function preparedDetailPlan(input: {
       if (!metadata) throw new AtsDetailResponseError('SuccessFactors detail posting identity mismatch');
       return { ...fields, company: publishedEmployerName(fields.company) || metadata.company || null,
         location: postingMetadataValue(fields.location) || metadata.location || null };
-    }, complete: async dependencies => {
+    }, complete: async fetchPage => {
       // The first response fence has been released before another request is
       // made. Nested provider reservations can otherwise deadlock the pool.
-      const recoveryDeadline = AbortSignal.timeout(15000);
-      const recoverySignal = input.signal ? AbortSignal.any([input.signal, recoveryDeadline]) : recoveryDeadline;
       const metadata = await recoverSuccessFactorsMetadata(pageHtml, url, async target => {
-        recoverySignal.throwIfAborted();
-        const decision = await dependencies.reserveProviderBudgetForSource(`ATS-${platform} Details`);
-        if (!decision.allowed) throw await deferredError(dependencies, platform, decision.retryAt);
-        const result = await dependencies.fetchPlatformResponse(platform, recoverySignal, async () => {
-          try { await input.onRequestStarted?.(); } catch (error) { throw new AtsEnrichmentControlError(error); }
-          return dependencies.safeExternalFetch(target, { headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent },
-            signal: recoverySignal });
-        }, { requestedUrl: target, boardSlug: slug, recordPlatformFailures: false });
-        try { await input.onResponseReceived?.({ status: result.status, respondedAt: dependencies.now() }); }
-        catch (error) { throw new AtsEnrichmentControlError(error); }
-        if (result.status === 429) throw await deferredError(dependencies, platform, retryAtFrom429(result, dependencies.now()));
+        const result = await fetchPage(target);
         if (!result.ok || !successFactorsEmployerPageMatches(target, result.url || target)) {
           throw new AtsDetailResponseError('SuccessFactors employer site did not return the requested page');
         }
@@ -867,20 +819,6 @@ function isDeferredError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AtsPlatformDeferredError';
 }
 
-function isAbortError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return error.name === 'AbortError' || error.name === 'TimeoutError';
-}
-
-function retryAtFrom429(response: Response, now: Date): Date | undefined {
-  const retryAfter = response.headers.get('retry-after')?.trim();
-  const seconds = Number.parseInt(retryAfter || '', 10);
-  const pauseMs = Number.isFinite(seconds) && seconds > 0
-    ? Math.min(seconds * 1000, 15 * 60_000)
-    : 60_000;
-  return new Date(now.getTime() + pauseMs);
-}
-
 function logTelemetryPersistenceFailure(
   action: 'success' | 'failure',
   provider: string,
@@ -919,64 +857,12 @@ async function successFactorsDetailDeferredError(
 async function enrichEmployerVerifiedPosting(input: EnrichAtsListingJobInput,
   fields: EnrichmentFields, dependencies: AtsJobEnrichmentDependencies): Promise<Record<string, unknown>> {
   const { platform, slug } = input;
-  const queueDeadline = AbortSignal.timeout(ATS_DETAIL_QUEUE_TIMEOUT_MS);
-  const queueSignal = input.signal ? AbortSignal.any([input.signal, queueDeadline]) : queueDeadline;
-  let networkSignal: AbortSignal | undefined;
-  let attempted = false;
-  let httpStatus: number | undefined;
-  const fetchPage = async (url: string): Promise<Response> => {
-    queueSignal.throwIfAborted();
-    networkSignal?.throwIfAborted();
-    const dispatchSignal = networkSignal ? AbortSignal.any([queueSignal, networkSignal]) : queueSignal;
-    const vendorRequest = new URL(url).hostname === new URL(String(input.job.url)).hostname
-      || platform === 'ukg' && publicAtsBoardSlugFromUrl(url, 'ukg') !== null;
-    let inspected = false;
-    const inspect = async (response: Response) => {
-      if (inspected) return;
-      inspected = true;
-      httpStatus = response.status;
-      try { await input.onResponseReceived?.({ status: response.status, respondedAt: dependencies.now() }); }
-      catch (error) { throw new AtsEnrichmentControlError(error); }
-      if (response.status === 429) throw await deferredError(dependencies, platform, retryAtFrom429(response, dependencies.now()));
-      if (!response.ok && ![403, 404, 410].includes(response.status)) {
-        if (!vendorRequest) throw new AtsDetailResponseError(`Linked employer website HTTP ${response.status}`);
-        throw new AtsDetailHttpError(response.status);
-      }
-    };
-    const request = async () => {
-      dispatchSignal.throwIfAborted();
-      for (const source of [`ATS-${platform}`, `ATS-${platform} Details`]) {
-        let decision: ProviderBudgetDecision;
-        try { decision = await dependencies.reserveProviderBudgetForSource(source); }
-        catch (error) { throw new AtsEnrichmentControlError(error); }
-        if (!decision.allowed) throw await deferredError(dependencies, platform, decision.retryAt);
-      }
-      dispatchSignal.throwIfAborted();
-      try { await input.onRequestStarted?.(); }
-      catch (error) { throw new AtsEnrichmentControlError(error); }
-      // One network deadline covers the complete evidence chain, not one
-      // renewed timeout for each optional website or alias lookup.
-      if (!networkSignal) {
-        const deadline = AbortSignal.timeout(Math.min(120_000, Math.max(1, Math.trunc(input.requestTimeoutMs))));
-        networkSignal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
-      }
-      networkSignal.throwIfAborted();
-      attempted = true;
-      try {
-        return await dependencies.safeExternalFetch(url, { signal: networkSignal,
-          headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent, Accept: 'application/json,text/html' } });
-      } catch (error) {
-        if (!vendorRequest && !isAbortError(error)) throw new AtsDetailResponseError('Linked employer website unavailable', error);
-        throw error;
-      }
-    };
-    // A linked corporate site's outage must not open the ATS provider circuit.
-    // It retains the same budget, receipt and deadline checks, outside that fence.
-    const response = vendorRequest ? await dependencies.fetchPlatformResponse(platform, dispatchSignal, request,
-      { requestedUrl: url, boardSlug: slug, recordPlatformFailures: false, onResponse: inspect }) : await request();
-    await inspect(response);
-    return response;
-  };
+  const session = createAtsDetailRequestSession(input, dependencies);
+  const fetchPage = (url: string) => session.request(url, {
+    vendorRequest: new URL(url).hostname === new URL(String(input.job.url)).hostname
+      || platform === 'ukg' && publicAtsBoardSlugFromUrl(url, 'ukg') !== null,
+    allowMissing: true,
+  });
   try {
     let initial: AtsPostingEvidenceResponse | undefined;
     if (platform === 'oracle') {
@@ -992,20 +878,20 @@ async function enrichEmployerVerifiedPosting(input: EnrichAtsListingJobInput,
         try { return await dependencies.verifiedBoardEmployer(...args); }
         catch (error) { throw new AtsEnrichmentControlError(error); }
       } }, initial);
-    networkSignal?.throwIfAborted();
+    session.assertWithinDeadline();
     if (!evidence) throw new AtsDetailResponseError(`${platform} posting identity or employer evidence is incomplete`
-      + (httpStatus ? ` (HTTP ${httpStatus})` : ''));
+      + (session.httpStatus ? ` (HTTP ${session.httpStatus})` : ''));
     await dependencies.recordProviderSuccess(`ATS-${platform} Details`, dependencies.now()).catch(error => {
       logTelemetryPersistenceFailure('success', `ATS-${platform} Details`, error);
     });
     const description = evidence.description || fields.description;
-    return cloneWithMarker(input.job, marker({ status: description ? 'enriched' : 'unavailable', platform, attempted, httpStatus,
+    return cloneWithMarker(input.job, marker({ status: description ? 'enriched' : 'unavailable', platform, attempted: session.attempted, httpStatus: session.httpStatus,
       reason: description ? undefined : 'no_usable_detail',
       fields: { ...fields, ...evidence, description, location: evidence.location || fields.location } }, dependencies));
   } catch (error) {
     if (isDeferredError(error)) throw error;
     if (error instanceof AtsEnrichmentControlError) throw error.controlError;
-    if (input.signal?.aborted || queueSignal.aborted || networkSignal?.aborted || isAbortError(error)) {
+    if (session.aborted || isAbortError(error)) {
       throw await deferredError(dependencies, platform);
     }
     if (!(error instanceof SyntaxError) && !isJobScopedDetailAvailability(error)) {
@@ -1018,8 +904,8 @@ async function enrichEmployerVerifiedPosting(input: EnrichAtsListingJobInput,
       pending.message = `${platform} detail awaits a verified employer: ${message.slice(0, 300)}`;
       throw pending;
     }
-    return cloneWithMarker(input.job, marker({ status: 'unavailable', platform, attempted, fields,
-      reason: error instanceof AtsDetailHttpError ? 'http_error' : 'endpoint_error', httpStatus, error: message }, dependencies));
+    return cloneWithMarker(input.job, marker({ status: 'unavailable', platform, attempted: session.attempted, fields,
+      reason: error instanceof AtsDetailHttpError ? 'http_error' : 'endpoint_error', httpStatus: session.httpStatus, error: message }, dependencies));
   }
 }
 
@@ -1058,107 +944,20 @@ export async function enrichAtsListingJob(
   }
   const plan = prepared.plan;
 
-  if (input.signal?.aborted) {
-    throw await deferredError(dependencies, platform);
-  }
-
-  // Queuing, circuit reads, and the durable dispatch receipt are local work.
-  // Give them a separate bounded wait so they cannot consume the endpoint's
-  // network timeout before the first byte has even been requested.
-  const queueTimeoutSignal = AbortSignal.timeout(ATS_DETAIL_QUEUE_TIMEOUT_MS);
-  const queueSignal = input.signal
-    ? AbortSignal.any([input.signal, queueTimeoutSignal])
-    : queueTimeoutSignal;
-  const network: { signal?: AbortSignal } = {};
-  const baseSource = `ATS-${platform}`;
-  const detailSource = `${baseSource} Details`;
-  let attempted = false;
-  let responseStatus: number | undefined;
-  let respondedAt: Date | undefined;
+  const session = createAtsDetailRequestSession({ ...input, platform }, dependencies);
+  const detailSource = `ATS-${platform} Details`;
   let parsedFields: EnrichmentFields | null = null;
-  let responseInspected = false;
-
-  const inspectResponse = async (response: Response) => {
-    if (responseInspected) return;
-    responseInspected = true;
-    responseStatus = response.status;
-    respondedAt = dependencies.now();
-    try {
-      await input.onResponseReceived?.({ status: response.status, respondedAt });
-    } catch (error) {
-      throw new AtsEnrichmentControlError(error);
-    }
-    if (response.status === 429) {
-      throw await deferredError(dependencies, platform, retryAtFrom429(response, respondedAt));
-    }
-    if (!response.ok) throw new AtsDetailHttpError(response.status);
-    parsedFields = await plan.parse(response.clone(), dependencies);
-  };
-
   try {
-    const response = await dependencies.fetchPlatformResponse(platform, queueSignal, async () => {
-      if (queueSignal.aborted) throw queueSignal.reason;
-      let baseDecision: ProviderBudgetDecision;
-      let detailDecision: ProviderBudgetDecision;
-      try {
-        baseDecision = await dependencies.reserveProviderBudgetForSource(baseSource);
-      } catch (error) {
-        throw new AtsEnrichmentControlError(error);
-      }
-      if (!baseDecision.allowed) {
-        throw await deferredError(dependencies, platform, baseDecision.retryAt);
-      }
-      try {
-        detailDecision = await dependencies.reserveProviderBudgetForSource(detailSource);
-      } catch (error) {
-        throw new AtsEnrichmentControlError(error);
-      }
-      if (!detailDecision.allowed) {
-        throw new AtsDetailProviderBlockedError(
-          detailDecision.reason || 'provider_control',
-          detailDecision.retryAt,
-        );
-      }
-      if (queueSignal.aborted) throw queueSignal.reason;
-      try {
-        await input.onRequestStarted?.();
-      } catch (error) {
-        throw new AtsEnrichmentControlError(error);
-      }
-      if (queueSignal.aborted) throw queueSignal.reason;
-      const timeoutSignal = AbortSignal.timeout(Math.min(120_000, Math.max(1, Math.trunc(input.requestTimeoutMs))));
-      const requestSignal = input.signal
-        ? AbortSignal.any([input.signal, timeoutSignal])
-        : timeoutSignal;
-      network.signal = requestSignal;
-      attempted = true;
-      const requestInit: RequestInit = plan.transport === 'fetch'
-        ? { headers: { Accept: 'application/json' }, signal: requestSignal }
-        : {
-            headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent },
-            signal: requestSignal,
-          };
-      return plan.transport === 'fetch'
-        ? dependencies.fetch(plan.url, requestInit)
-        : dependencies.safeExternalFetch(plan.url, requestInit);
-    }, {
-      onResponse: inspectResponse,
-      // The detail source owns detail health. A single removed or protected job
-      // must never open the listing circuit for every board on the platform.
-      recordPlatformFailures: false,
-      requestedUrl: plan.url,
-      boardSlug: input.slug,
-    });
-
-    // The production scheduler invokes onResponse under Workable's durable
-    // fence. This fallback keeps injected schedulers honest without changing
-    // the production boundary.
-    if (!responseInspected) await inspectResponse(response);
-    if (plan.complete) parsedFields = await plan.complete(dependencies);
-    if (network.signal?.aborted) throw network.signal.reason;
+    await session.request(plan.url, { transport: plan.transport,
+      inspect: async response => { parsedFields = await plan.parse(response.clone(), dependencies); } });
+    if (plan.complete) parsedFields = await plan.complete(url => session.request(url, {
+      vendorRequest: new URL(url).hostname === new URL(plan.url).hostname,
+      allowMissing: true,
+    }));
+    session.assertWithinDeadline();
     const fields = parsedFields || prepared.fields;
     const detailWasUsable = hasUsableDetailEnrichment(fields, prepared.fields);
-    await dependencies.recordProviderSuccess(detailSource, respondedAt).catch((error) => {
+    await dependencies.recordProviderSuccess(detailSource, session.respondedAt).catch((error) => {
       logTelemetryPersistenceFailure('success', detailSource, error);
     });
     if (platform === 'successfactors' && (!publishedEmployerName(fields.company) || !postingMetadataValue(fields.location))) {
@@ -1174,24 +973,17 @@ export async function enrichAtsListingJob(
     return cloneWithMarker(input.job, marker({
       status: detailWasUsable ? 'enriched' : 'unavailable',
       platform,
-      attempted,
+      attempted: session.attempted,
       fields,
       reason: detailWasUsable ? undefined : 'no_usable_detail',
-      httpStatus: responseStatus,
+      httpStatus: session.httpStatus,
     }, dependencies));
   } catch (error) {
     if (isDeferredError(error)) throw error;
     if (error instanceof AtsEnrichmentControlError) throw error.controlError;
-    if (input.signal?.aborted || network.signal?.aborted
-      || (!attempted && queueSignal.aborted) || isAbortError(error)) {
+    if (session.aborted || isAbortError(error)) {
       throw await deferredError(dependencies, platform);
     }
-    if (error instanceof AtsDetailProviderBlockedError) {
-      const retryAt = error.retryAt
-        || new Date(dependencies.now().getTime() + 15 * 60_000);
-      throw await deferredError(dependencies, platform, retryAt);
-    }
-
     if (!isJobScopedDetailAvailability(error)) {
       await dependencies.recordProviderFailure({
         provider: detailSource,
@@ -1208,10 +1000,10 @@ export async function enrichAtsListingJob(
     return cloneWithMarker(input.job, marker({
       status: 'unavailable',
       platform,
-      attempted,
+      attempted: session.attempted,
       fields: prepared.fields,
       reason: error instanceof AtsDetailHttpError ? 'http_error' : 'endpoint_error',
-      httpStatus: responseStatus,
+      httpStatus: session.httpStatus,
       error: message,
     }, dependencies));
   }

@@ -94,7 +94,7 @@ function employerEvidenceDependencies(platform: string, slug: string): AtsEmploy
         return safeExternalFetch(url, { signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
       }
       const [{ fetchAtsPlatformResponse }, { reserveProviderBudgetForSource }] = await Promise.all([
-        import('./jobIngestion'), import('./ingestionControl'),
+        import('./atsProviderRequest'), import('./ingestionControl'),
       ]);
       return fetchAtsPlatformResponse(platform, signal, async () => {
         const available = await reserveProviderBudgetForSource('ATS-' + platform);

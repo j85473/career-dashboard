@@ -21,7 +21,7 @@ import {
   RateLimitedError,
   fetchAtsPlatformResponse,
   platformPauseRemainingMs,
-} from './jobIngestion';
+} from './atsProviderRequest';
 import { atsRateLimitIsAbsentBoard, atsAuthFailureIsPlatformWide, atsResponseSchemaFailureIsPlatformWide } from './atsUtils';
 import {
   ATS_JOB_ENRICHMENT_VERSION,

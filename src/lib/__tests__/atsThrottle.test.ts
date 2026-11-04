@@ -264,7 +264,7 @@ test('the response boundary and the failure classifier agree on who owns a 403',
 
   // Both recording paths at the boundary must consult it -- the thrown-error
   // path that classification reaches first, and the status check below it.
-  const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
+  const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/atsProviderRequest.ts'), 'utf8');
   const boundary = ingestion.slice(
     ingestion.indexOf('export async function fetchAtsPlatformResponse'),
     ingestion.indexOf('export async function fetchAtsPlatformResponse') + 4000,

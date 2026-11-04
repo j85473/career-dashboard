@@ -39,7 +39,7 @@ test('pipeline route supervises exactly one isolated acquisition launcher and al
 test('a platform-wide ATS cooldown defers the durable consumer chunk instead of consuming detail-less jobs', () => {
   const ingestion = readFileSync(ingestionPath, 'utf8');
 
-  assert.match(ingestion, /export class AtsPlatformDeferredError extends Error/);
+  assert.match(readFileSync(path.resolve(process.cwd(), 'src/lib/atsProviderRequest.ts'), 'utf8'), /export class AtsPlatformDeferredError extends Error/);
   assert.match(ingestion, /throw new AtsPlatformDeferredError\(atsDetailMatch\[1\], platformDecision\.retryAt\)/);
   assert.equal(
     ingestion.match(/if \(e instanceof AtsPlatformDeferredError\) throw e;/g)?.length,
