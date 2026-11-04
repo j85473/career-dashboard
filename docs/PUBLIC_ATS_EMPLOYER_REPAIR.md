@@ -1,6 +1,6 @@
 # Oracle and UKG employer repair
 
-New Oracle and UKG listing acquisition and card creation require a source-backed
+New Oracle and UKG handoffs to card creation require a source-backed
 company name. Older downloaded work with missing employer evidence retains its
 unprocessed suffix through the existing soft-interruption path.
 Oracle's own branded tenant can identify Oracle even when LegalEmployer is
@@ -12,9 +12,31 @@ supply the same website fallback as a modern header. The adapter reads
 explicit metadata on the employer website that header links. A corroborated
 first-person introduction can identify a hiring subsidiary.
 
-Employer verification defers a board for one hour without increasing its failure
-count, blacklisting it, or opening a shared provider circuit. Real provider rate
+Retained handoffs wait one hour for missing employer evidence without increasing
+their failure count, blacklisting the board, or opening a shared provider circuit. Real provider rate
 limits and transport controls retain their existing protection.
+
+## Acquisition handoff
+
+New Oracle and UKG detail work uses the same exact-posting evidence reader as
+retained handoffs. The reader checks the posting ID, title and board, then uses
+published posting or board evidence to resolve the employer. Oracle's already
+downloaded detail response and the listing's already fetched board page are
+reused; a source lookup does not need to download them again.
+
+An unresolved employer stays pending in acquisition with an item retry one hour
+later. It does not receive a terminal enrichment marker or enter the card
+consumer's employer-retry queue. Provider retry dates and operator stops take
+precedence. Secondary requests share one network deadline, pass through provider
+controls, and run after the previous request releases its provider fence.
+Complete segments can proceed independently; a segment containing a pending
+item still waits for that item under the existing immutable manifest rules.
+
+Ready handoffs need no further employer lookup during card creation. Older
+immutable handoffs retain their board-then-posting recovery path through the
+same evidence reader. Recovery fills the consumer's local copy only. Installing
+this change does not rewrite saved markers, manifests, retry dates, existing
+cards, scores, or lifecycle decisions, and does not bulk-release retained holds.
 
 ## Historical repair
 

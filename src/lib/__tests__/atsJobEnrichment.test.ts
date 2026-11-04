@@ -323,6 +323,7 @@ function createHarness(input: HarnessInput = {}): Harness {
       return null;
     },
     createDeferredError: (platform, retryAt) => new TestAtsPlatformDeferredError(platform, retryAt),
+    verifiedBoardEmployer: async () => '',
     parseJsonLdPage: async () => input.jsonLd ?? {
       found: false,
       descriptionIsString: false,
@@ -1138,6 +1139,16 @@ for (const fixture of jobScopedDetailCases) {
     };
     const original = structuredClone(fixture.input.job);
     for (let attempt = 0; attempt < 4; attempt++) {
+      if (['oracle', 'ukg'].includes(fixture.input.platform)) {
+        await assert.rejects(enrichAtsListingJob(fixture.input, { ...bad.dependencies, ...sharedControl }), (error: unknown) => {
+          assert.ok(error instanceof TestAtsPlatformDeferredError);
+          assert.equal(error.retryAt?.toISOString(), '2026-08-27T18:00:00.000Z');
+          assert.match(error.message, /detail awaits a verified employer/);
+          return true;
+        });
+        assert.equal(readAtsJobEnrichmentMarker(fixture.input.job), null, 'unresolved evidence cannot enter a terminal handoff');
+        continue;
+      }
       const result = await enrichAtsListingJob(fixture.input, { ...bad.dependencies, ...sharedControl });
       const marker = readAtsJobEnrichmentMarker(result)!;
       assert.equal(marker.status, 'unavailable');

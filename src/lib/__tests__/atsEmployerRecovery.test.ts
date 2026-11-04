@@ -29,6 +29,20 @@ test('Oracle customer recovery verifies the linked employer metadata without exe
   assert.deepEqual(calls, [url, 'https://employer.example/']);
 });
 
+test('listing recovery reuses the fetched board page and rejects a seed from another board', async () => {
+  const calls: string[] = [];
+  const dependencies = { registry: async () => '', fetchPage: async (target: string) => {
+    calls.push(target);
+    assert.equal(target, 'https://employer.example/');
+    return new Response('<meta property="og:site_name" content="Example Employer">');
+  } };
+  assert.equal(await readPublishedAtsBoardEmployer('oracle', slug, dependencies, { url, html: header }), 'Example Employer');
+  assert.deepEqual(calls, ['https://employer.example/']);
+  assert.equal(await readPublishedAtsBoardEmployer('oracle', slug, dependencies,
+    { url: url.replace('CX_2001', 'OTHER'), html: header }), '');
+  assert.equal(calls.length, 1);
+});
+
 test('employer recovery rejects a board redirect and a corporate redirect to an unrelated host', async () => {
   let calls = 0;
   assert.equal(await readPublishedAtsBoardEmployer('oracle', slug, {

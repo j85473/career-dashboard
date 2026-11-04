@@ -49,7 +49,7 @@ test('a platform-wide ATS cooldown defers the durable consumer chunk instead of 
   assert.match(ingestion, /ingestionInterruptionReason \|\|= err\.message/);
 });
 
-test('a prefetched ATS item consumes the child marker and cannot enter parent network fallbacks', () => {
+test('a prefetched ATS item consumes its marker and skips generic network fallbacks; retained employer recovery is separate', () => {
   const ingestion = readFileSync(ingestionPath, 'utf8');
 
   assert.match(ingestion, /readAtsJobEnrichmentMarker\(job\)/);

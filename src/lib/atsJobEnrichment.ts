@@ -1,4 +1,5 @@
-import { publishedEmployerName, resolveUkgBoardEmployer } from './publicAtsEmployer';
+import { publishedEmployerName } from './publicAtsEmployer';
+import { readPublishedAtsPostingEvidence, type AtsPostingEvidenceResponse } from './atsEmployerRecovery';
 import { publicAtsBoardSlugFromUrl, isPublicAtsPlatform } from './publicAtsBoards';
 import { eightfoldDetailUrl, eightfoldLocation } from './eightfoldBoard';
 import { isDailyAtsBoard } from './atsRotation';
@@ -86,6 +87,7 @@ export type AtsJobEnrichmentDependencies = {
   }) => Promise<unknown>;
   createDeferredError: (platform: string, retryAt?: Date) => Error | Promise<Error>;
   parseJsonLdPage: (html: string) => ParsedJsonLdPage | Promise<ParsedJsonLdPage>;
+  verifiedBoardEmployer: (platform: string, slug: string) => Promise<string>;
   jsonLdFetchUserAgent: string;
   passesPreFilter: typeof passesPreFilter;
   now: () => Date;
@@ -123,7 +125,8 @@ const DETAIL_MUTABLE_FIELDS: Readonly<Record<string, ReadonlySet<DetailMutableFi
   rippling: new Set(['description', 'company', 'location', 'compensation']),
 };
 
-type DetailPlan = {
+type DetailPlan = { kind: 'employer'; fields: EnrichmentFields } | {
+  kind?: 'detail';
   url: string;
   transport: 'fetch' | 'safe_fetch';
   fields: EnrichmentFields;
@@ -241,6 +244,10 @@ const DEFAULT_DEPENDENCIES: AtsJobEnrichmentDependencies = {
   createDeferredError: async (platform, retryAt) => {
     const { AtsPlatformDeferredError } = await loadJobIngestionModule();
     return new AtsPlatformDeferredError(platform, retryAt);
+  },
+  verifiedBoardEmployer: async (platform, slug) => {
+    const { verifiedAtsBoardEmployer } = await import('./atsEmployerRegistry');
+    return verifiedAtsBoardEmployer(platform, slug);
   },
   parseJsonLdPage: async (html) => {
     const {
@@ -523,39 +530,10 @@ function preparedDetailPlan(input: {
   }
 
   if (platform === 'oracle' || platform === 'ukg') {
-    // Persistence requires employer identity even for an archived title miss.
-    // A missing name must reach the exact detail rather than acquiring a
-    // no-request marker that can never satisfy the consumer's employer guard.
+    // A terminal handoff must meet the consumer's employer requirement.
     const employerKnown = fields.company === 'Oracle' || Boolean(publishedEmployerName(fields.company));
     if (employerKnown && immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
-    const url = stringValue(job.url);
-    if (!url || publicAtsBoardSlugFromUrl(url, platform) !== slug) return { plan: null, reason: 'missing_detail_identity', fields };
-    const postingId = platform === 'oracle' ? new URL(url).pathname.split('/').filter(Boolean).at(-1)
-      : new URL(url).searchParams.get('opportunityId');
-    if (!postingId || postingId !== stringValue(job.publicAtsPostingId)) return { plan: null, reason: 'missing_detail_identity', fields };
-    return { plan: {
-      url: platform === 'oracle' ? new URL('/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails', url).href
-        + '?' + new URLSearchParams({ expand: 'all', onlyData: 'true', finder: `ById;Id="${String(job.publicAtsPostingId)}",siteNumber=${slug.split('::')[1]}` }) : url,
-      transport: platform === 'ukg' ? 'safe_fetch' : 'fetch', fields,
-      parse: async (response, dependencies) => {
-        const html = platform === 'ukg' ? await response.text() : '';
-        const result = platform === 'ukg'
-          ? (await import('./ukgPosting')).parseUkgPostingHtml(html, url)
-          : (await import('./oraclePosting')).parseOraclePostingDetail(await readDetailJson(response), url);
-        if (result && platform === 'ukg' && !result.company && !fields.company) {
-          try {
-            result.company = await resolveUkgBoardEmployer(html, url, employerUrl => dependencies.safeExternalFetch(employerUrl,
-              { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent } })) || undefined;
-          } catch (error) {
-            throw new AtsDetailResponseError('UKG employer website could not be verified', error);
-          }
-        }
-        if (!result || !result.text) throw new AtsDetailResponseError(`${platform} detail schema or posting identity mismatch`);
-        const company = result.company || fields.company;
-        if (!company) throw new AtsDetailResponseError(`${platform} detail has no authoritative employer`);
-        return { ...fields, description: result.text, company, location: result.location || fields.location };
-      },
-    }, reason: '', fields };
+    return { plan: { kind: 'employer', fields }, reason: '', fields };
   }
   if (platform === 'successfactors' && (!publishedEmployerName(fields.company) || !postingMetadataValue(fields.location))) {
     const url = stringValue(job.url);
@@ -935,6 +913,116 @@ async function successFactorsDetailDeferredError(
   return error;
 }
 
+/** Oracle/UKG use the same evidence reader as retained handoffs. Only complete
+ * employer evidence leaves acquisition; unresolved items keep their own retry.
+ * Every request releases its provider fence before another source is read. */
+async function enrichEmployerVerifiedPosting(input: EnrichAtsListingJobInput,
+  fields: EnrichmentFields, dependencies: AtsJobEnrichmentDependencies): Promise<Record<string, unknown>> {
+  const { platform, slug } = input;
+  const queueDeadline = AbortSignal.timeout(ATS_DETAIL_QUEUE_TIMEOUT_MS);
+  const queueSignal = input.signal ? AbortSignal.any([input.signal, queueDeadline]) : queueDeadline;
+  let networkSignal: AbortSignal | undefined;
+  let attempted = false;
+  let httpStatus: number | undefined;
+  const fetchPage = async (url: string): Promise<Response> => {
+    queueSignal.throwIfAborted();
+    networkSignal?.throwIfAborted();
+    const dispatchSignal = networkSignal ? AbortSignal.any([queueSignal, networkSignal]) : queueSignal;
+    const vendorRequest = new URL(url).hostname === new URL(String(input.job.url)).hostname
+      || platform === 'ukg' && publicAtsBoardSlugFromUrl(url, 'ukg') !== null;
+    let inspected = false;
+    const inspect = async (response: Response) => {
+      if (inspected) return;
+      inspected = true;
+      httpStatus = response.status;
+      try { await input.onResponseReceived?.({ status: response.status, respondedAt: dependencies.now() }); }
+      catch (error) { throw new AtsEnrichmentControlError(error); }
+      if (response.status === 429) throw await deferredError(dependencies, platform, retryAtFrom429(response, dependencies.now()));
+      if (!response.ok && ![403, 404, 410].includes(response.status)) {
+        if (!vendorRequest) throw new AtsDetailResponseError(`Linked employer website HTTP ${response.status}`);
+        throw new AtsDetailHttpError(response.status);
+      }
+    };
+    const request = async () => {
+      dispatchSignal.throwIfAborted();
+      for (const source of [`ATS-${platform}`, `ATS-${platform} Details`]) {
+        let decision: ProviderBudgetDecision;
+        try { decision = await dependencies.reserveProviderBudgetForSource(source); }
+        catch (error) { throw new AtsEnrichmentControlError(error); }
+        if (!decision.allowed) throw await deferredError(dependencies, platform, decision.retryAt);
+      }
+      dispatchSignal.throwIfAborted();
+      try { await input.onRequestStarted?.(); }
+      catch (error) { throw new AtsEnrichmentControlError(error); }
+      // One network deadline covers the complete evidence chain, not one
+      // renewed timeout for each optional website or alias lookup.
+      if (!networkSignal) {
+        const deadline = AbortSignal.timeout(Math.min(120_000, Math.max(1, Math.trunc(input.requestTimeoutMs))));
+        networkSignal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
+      }
+      networkSignal.throwIfAborted();
+      attempted = true;
+      try {
+        return await dependencies.safeExternalFetch(url, { signal: networkSignal,
+          headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent, Accept: 'application/json,text/html' } });
+      } catch (error) {
+        if (!vendorRequest && !isAbortError(error)) throw new AtsDetailResponseError('Linked employer website unavailable', error);
+        throw error;
+      }
+    };
+    // A linked corporate site's outage must not open the ATS provider circuit.
+    // It retains the same budget, receipt and deadline checks, outside that fence.
+    const response = vendorRequest ? await dependencies.fetchPlatformResponse(platform, dispatchSignal, request,
+      { requestedUrl: url, boardSlug: slug, recordPlatformFailures: false, onResponse: inspect }) : await request();
+    await inspect(response);
+    return response;
+  };
+  try {
+    let initial: AtsPostingEvidenceResponse | undefined;
+    if (platform === 'oracle') {
+      const { oraclePostingDetailUrl } = await import('./oraclePosting');
+      const url = stringValue(input.job.url);
+      const detail = oraclePostingDetailUrl(url);
+      if (detail && publicAtsBoardSlugFromUrl(url, 'oracle') === slug
+        && new URL(url).pathname.split('/').filter(Boolean).at(-1) === stringValue(input.job.publicAtsPostingId)
+        && stringValue(input.job.title)) initial = { url: detail.href, response: await fetchPage(detail.href) };
+    }
+    const evidence = await readPublishedAtsPostingEvidence(platform, slug, input.job,
+      { fetchPage, registry: async (...args) => {
+        try { return await dependencies.verifiedBoardEmployer(...args); }
+        catch (error) { throw new AtsEnrichmentControlError(error); }
+      } }, initial);
+    networkSignal?.throwIfAborted();
+    if (!evidence) throw new AtsDetailResponseError(`${platform} posting identity or employer evidence is incomplete`
+      + (httpStatus ? ` (HTTP ${httpStatus})` : ''));
+    await dependencies.recordProviderSuccess(`ATS-${platform} Details`, dependencies.now()).catch(error => {
+      logTelemetryPersistenceFailure('success', `ATS-${platform} Details`, error);
+    });
+    const description = evidence.description || fields.description;
+    return cloneWithMarker(input.job, marker({ status: description ? 'enriched' : 'unavailable', platform, attempted, httpStatus,
+      reason: description ? undefined : 'no_usable_detail',
+      fields: { ...fields, ...evidence, description, location: evidence.location || fields.location } }, dependencies));
+  } catch (error) {
+    if (isDeferredError(error)) throw error;
+    if (error instanceof AtsEnrichmentControlError) throw error.controlError;
+    if (input.signal?.aborted || queueSignal.aborted || networkSignal?.aborted || isAbortError(error)) {
+      throw await deferredError(dependencies, platform);
+    }
+    if (!(error instanceof SyntaxError) && !isJobScopedDetailAvailability(error)) {
+      await dependencies.recordProviderFailure({ provider: `ATS-${platform} Details`, error, now: dependencies.now() })
+        .catch(failure => logTelemetryPersistenceFailure('failure', `ATS-${platform} Details`, failure));
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (fields.company !== 'Oracle' && !publishedEmployerName(fields.company)) {
+      const pending = await deferredError(dependencies, platform, new Date(dependencies.now().getTime() + 3600_000));
+      pending.message = `${platform} detail awaits a verified employer: ${message.slice(0, 300)}`;
+      throw pending;
+    }
+    return cloneWithMarker(input.job, marker({ status: 'unavailable', platform, attempted, fields,
+      reason: error instanceof AtsDetailHttpError ? 'http_error' : 'endpoint_error', httpStatus, error: message }, dependencies));
+  }
+}
+
 /**
  * Enrich one raw ATS listing while keeping all derived fields under a reserved
  * marker. A durable marker is written only for terminal item outcomes. Base
@@ -965,6 +1053,10 @@ export async function enrichAtsListingJob(
       reason: prepared.reason,
     }, dependencies));
   }
+  if (prepared.plan.kind === 'employer') {
+    return enrichEmployerVerifiedPosting({ ...input, platform }, prepared.fields, dependencies);
+  }
+  const plan = prepared.plan;
 
   if (input.signal?.aborted) {
     throw await deferredError(dependencies, platform);
@@ -1000,7 +1092,7 @@ export async function enrichAtsListingJob(
       throw await deferredError(dependencies, platform, retryAtFrom429(response, respondedAt));
     }
     if (!response.ok) throw new AtsDetailHttpError(response.status);
-    parsedFields = await prepared.plan!.parse(response.clone(), dependencies);
+    parsedFields = await plan.parse(response.clone(), dependencies);
   };
 
   try {
@@ -1040,21 +1132,21 @@ export async function enrichAtsListingJob(
         : timeoutSignal;
       network.signal = requestSignal;
       attempted = true;
-      const requestInit: RequestInit = prepared.plan!.transport === 'fetch'
+      const requestInit: RequestInit = plan.transport === 'fetch'
         ? { headers: { Accept: 'application/json' }, signal: requestSignal }
         : {
             headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent },
             signal: requestSignal,
           };
-      return prepared.plan!.transport === 'fetch'
-        ? dependencies.fetch(prepared.plan!.url, requestInit)
-        : dependencies.safeExternalFetch(prepared.plan!.url, requestInit);
+      return plan.transport === 'fetch'
+        ? dependencies.fetch(plan.url, requestInit)
+        : dependencies.safeExternalFetch(plan.url, requestInit);
     }, {
       onResponse: inspectResponse,
       // The detail source owns detail health. A single removed or protected job
       // must never open the listing circuit for every board on the platform.
       recordPlatformFailures: false,
-      requestedUrl: prepared.plan!.url,
+      requestedUrl: plan.url,
       boardSlug: input.slug,
     });
 
@@ -1062,7 +1154,7 @@ export async function enrichAtsListingJob(
     // fence. This fallback keeps injected schedulers honest without changing
     // the production boundary.
     if (!responseInspected) await inspectResponse(response);
-    if (prepared.plan.complete) parsedFields = await prepared.plan.complete(dependencies);
+    if (plan.complete) parsedFields = await plan.complete(dependencies);
     if (network.signal?.aborted) throw network.signal.reason;
     const fields = parsedFields || prepared.fields;
     const detailWasUsable = hasUsableDetailEnrichment(fields, prepared.fields);
