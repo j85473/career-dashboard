@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { InterviewSchedule } from '@/components/InterviewSchedule';
+import { JobDocuments } from '@/components/JobDocuments';
 import { Bookmark, CheckCircle, XCircle, ExternalLink, AlertTriangle, Edit2, Loader2, Save, Copy } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
@@ -1141,6 +1142,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
       <div className="expand-body">
         <div className="expand-col left-col">
+          <JobDocuments job={job} onJobUpdate={(id, updates) => {
+            setJob(current => ({ ...current, ...updates }));
+            onJobUpdate?.(id, updates);
+          }} />
           {(job.status === 'interviewing' || Boolean(job.interviews?.length)) && (
             <InterviewSchedule job={job} onJobUpdate={(id, updates) => {
               setJob(current => ({ ...current, ...updates }));

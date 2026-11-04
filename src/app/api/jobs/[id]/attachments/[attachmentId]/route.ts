@@ -3,18 +3,20 @@ import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string; attachmentId: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string; attachmentId: string }> }) {
   const { id, attachmentId } = await context.params;
   const attachment = await prisma.jobAttachment.findFirst({
     where: { id: attachmentId, jobId: id },
   });
   if (!attachment) return NextResponse.json({ error: 'Document not found on this job.' }, { status: 404 });
   const encodedName = encodeURIComponent(attachment.fileName);
+  const previewable = attachment.mimeType === 'application/pdf' || attachment.mimeType.startsWith('text/plain');
+  const disposition = new URL(request.url).searchParams.get('inline') === '1' && previewable ? 'inline' : 'attachment';
   return new Response(new Uint8Array(attachment.content), {
     headers: {
       'Content-Type': attachment.mimeType,
       'Content-Length': String(attachment.sizeBytes),
-      'Content-Disposition': `attachment; filename="document"; filename*=UTF-8''${encodedName}`,
+      'Content-Disposition': `${disposition}; filename="document"; filename*=UTF-8''${encodedName}`,
       'Cache-Control': 'private, no-store',
       'X-Content-Type-Options': 'nosniff',
     },
