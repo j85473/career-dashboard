@@ -7,6 +7,7 @@ import { jobvitePublishedLocation } from './jobviteLocation';
 import { isPlaceholderEmployerName } from './companyIdentity';
 import { talemetryPublishedEmployer } from './talemetryEmployer';
 import { avaturePublishedLocation } from './avatureLocation';
+import { taleoPostingMetadata } from './taleoPostingMetadata';
 export type BrowserPostingLink = {
     id: string;
     url: string;
@@ -335,8 +336,11 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
             location = $('.heading .description').text().trim().split(/\n/).map(x => x.trim()).filter(Boolean).at(-1) || '';
         if (!location && platform === 'cats')
             location = $('.job-header .job-tags li').first().text().trim();
-        if (!location && platform === 'taleo')
-            location = $('.contentlinepanel').filter((_, n) => /^(?:Primary Location|Work Locations)/.test($(n).text().trim())).map((_, n) => $(n).text().trim()).get().join('; ');
+        if (platform === 'taleo') {
+            const metadata = taleoPostingMetadata(doc.html, description);
+            company ||= metadata.company;
+            location ||= metadata.location;
+        }
         if (!location && platform === 'dzconnex')
             location = /^\s*Location:\s*(.+)$/m.exec(description)?.[1] || '';
         if (title && description.length >= 200) {
