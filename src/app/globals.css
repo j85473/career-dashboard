@@ -1553,7 +1553,18 @@ body {
 .job-document-preview-actions a, .job-document-preview-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; color: var(--text); font: inherit; font-size: 12px; text-decoration: none; }
 .job-document-preview-actions button { min-width: 36px; border: 1px solid var(--border); border-radius: 6px; background: var(--subtle); cursor: pointer; }
 .job-document-preview-actions a:focus-visible, .job-document-preview-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.job-document-preview-frame { display: block; flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
+.pdf-document-viewer { display: flex; flex: 1; flex-direction: column; min-height: 0; background: #000; color-scheme: dark; }
+.pdf-preview-toolbar { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 5px; padding: 6px; background: #111; border-bottom: 1px solid var(--border); font-size: 12px; }
+.pdf-preview-toolbar button, .pdf-preview-toolbar select, .pdf-preview-message button { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 4px 7px; color: var(--text); background: #111; border: 1px solid var(--border); border-radius: 5px; font: inherit; cursor: pointer; }
+.pdf-preview-toolbar button:disabled, .pdf-preview-toolbar select:disabled { opacity: .4; cursor: default; }
+.pdf-preview-toolbar button:focus-visible, .pdf-preview-toolbar select:focus-visible, .pdf-preview-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pdf-preview-page-count { min-width: 45px; text-align: center; }
+.pdf-preview-toolbar-divider { width: 1px; height: 22px; margin: 0 4px; background: var(--border); }
+.pdf-preview-content { position: relative; flex: 1; min-height: 0; background: #000; }
+.pdf-preview-scroll { position: absolute; inset: 0; overflow: auto; background: #000; overscroll-behavior: contain; }
+.pdf-preview-scroll .pdfViewer { --page-bg-color: #fff; padding: 12px 0; background: #000; }
+.pdf-preview-message { position: absolute; inset: 30px 12px auto; z-index: 1; text-align: center; font-size: 13px; color: var(--text-muted); }
+.pdf-preview-message p { margin-bottom: 10px; }
 @media (max-width: 600px) {
   .job-document-preview { width: 100vw; height: 100dvh; margin: 0; border: 0; border-radius: 0; }
   .job-document-preview-header { padding: 10px 12px; }

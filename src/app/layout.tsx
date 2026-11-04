@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import 'pdfjs-dist/web/pdf_viewer.css';
 import './globals.css';
 import { GlobalModal } from '@/components/GlobalModal';
 

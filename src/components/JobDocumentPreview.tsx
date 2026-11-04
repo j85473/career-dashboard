@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Download, X } from 'lucide-react';
+import { PdfDocumentViewer } from '@/components/PdfDocumentViewer';
 
 export function JobDocumentPreview({ url, label, fileName, onClose }: {
   url: string;
@@ -38,7 +39,7 @@ export function JobDocumentPreview({ url, label, fileName, onClose }: {
           <button type="button" onClick={onClose} aria-label="Close document preview"><X size={20} /></button>
         </div>
       </header>
-      <iframe className="job-document-preview-frame" src={`${url}?inline=1`} title={label} />
+      <PdfDocumentViewer url={`${url}?inline=1`} label={label} />
     </dialog>,
     document.body,
   );
