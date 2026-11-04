@@ -4,13 +4,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Client } from 'pg';
 import { buildRuntimeDatabaseUrl } from '../src/lib/databaseUrl';
-import { reviewedTalemetryEmployer, SYNEOS_CAREERS_EVIDENCE_URL } from '../src/lib/talemetryEmployer';
+import { reviewedTalemetryEmployer } from '../src/lib/talemetryEmployer';
 import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
 import { isPlaceholderEmployerName } from '../src/lib/companyIdentity';
 
 // Explicit metadata repair only. All scoring inputs retain their existing
 // score authority; no ingestion, lifecycle, history, or scoring writer is run.
-const VERSION = 'talemetry-placeholder-company-repair-v1';
+const VERSION = 'talemetry-placeholder-company-repair-v2';
 const RELATED_TABLES = ['JobScoreEvent', 'JobScoringArtifact', 'AimFactualExtraction',
   'JobStatusHistory', 'JobScoringStatusHistory', 'JobPipelineEvent', 'ScoringBatchItem'] as const;
 type Candidate = {
@@ -33,19 +33,21 @@ function resolve(candidate: Candidate): Resolved | { candidate: Candidate; reaso
   if (!candidate.url || !isPlaceholderEmployerName(candidate.company)) return { candidate, reason: 'not_a_placeholder' };
   const company = reviewedTalemetryEmployer(candidate.url, candidate.description);
   if (!company) return { candidate, reason: 'no_unambiguous_reviewed_employer' };
-  return { candidate, company, employer: company, evidenceUrl: SYNEOS_CAREERS_EVIDENCE_URL,
+  if (!isPlaceholderEmployerName(candidate.employer) && candidate.employer !== company) return { candidate, reason: 'existing_employer_preserved' };
+  return { candidate, company, employer: company, evidenceUrl: candidate.url,
     descriptionSha256: canonicalJsonSha256(candidate.description) };
 }
 
-async function preview(client: Client, file: string, jobId?: string): Promise<void> {
+async function preview(client: Client, file: string, jobId?: string, boardHost?: string): Promise<void> {
   const { rows: candidates } = await client.query<Candidate>(`
     SELECT id, company, employer, title, description, url, source, "sourceId", location, status, "scoringStatus",
       "fitScore", "aimFitScore", "reqFitScore"
     FROM "Job" WHERE source = 'ATS-talemetry'
-      AND lower(btrim(company)) IN ('company', 'company name', 'company logo', 'employer', 'employer name', 'organization', 'organisation')
+      AND lower(btrim(company)) IN ('unknown company', 'unknown employer', 'unknown', 'company', 'company name', 'company logo', 'employer', 'employer name', 'organization', 'organisation')
       AND ($1::text IS NULL OR id = $1)
+      AND ($2::text IS NULL OR url LIKE 'https://' || $2 || '/jobs/%')
     ORDER BY id
-  `, [jobId || null]);
+  `, [jobId || null, boardHost || null]);
   const resolved: Resolved[] = [], unavailable: PlanPayload['unavailable'] = [];
   for (const candidate of candidates) {
     const result = resolve(candidate);
@@ -83,7 +85,10 @@ async function apply(client: Client, file: string, approvedHash: string, receipt
   assert.equal(canonicalJsonSha256(payload), selectionHash, 'Recovery plan content changed');
   assert.equal(new Set(plan.resolved.map(r => r.candidate.id)).size, plan.resolved.length, 'Duplicate plan IDs');
   for (const record of plan.resolved) {
+    assert.equal(record.candidate.source, 'ATS-talemetry', 'Plan includes another source');
     assert(isPlaceholderEmployerName(record.candidate.company), 'Plan includes a real employer label');
+    assert(isPlaceholderEmployerName(record.candidate.employer) || record.candidate.employer === record.company,
+      'Plan would replace an existing employer');
     assert.equal(reviewedTalemetryEmployer(record.candidate.url || '', record.candidate.description), record.company, 'Employer evidence changed');
     assert.equal(record.employer, record.company, 'Unreviewed employer grouping');
     assert.equal(canonicalJsonSha256(record.candidate.description), record.descriptionSha256, 'Description evidence changed');
@@ -100,7 +105,7 @@ async function apply(client: Client, file: string, approvedHash: string, receipt
     const applicable = plan.resolved.filter(({ candidate }) => {
       const row = current.get(candidate.id);
       return row && row.source === candidate.source && row.url === candidate.url
-        && row.sourceId === candidate.sourceId && row.company === candidate.company
+        && row.sourceId === candidate.sourceId && row.company === candidate.company && row.employer === candidate.employer
         && canonicalJsonSha256(row.description) === canonicalJsonSha256(candidate.description);
     });
     const appliedIds = applicable.map(r => r.candidate.id).sort();
@@ -158,15 +163,18 @@ async function apply(client: Client, file: string, approvedHash: string, receipt
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const validPreview = (args.length === 2 || args.length === 4 && args[2] === '--job-id' && /^[a-f0-9-]{36}$/.test(args[3])) && args[0] === '--plan';
+  const validPreview = args[0] === '--plan' && (args.length === 2 || args.length === 4 && (
+    args[2] === '--job-id' && /^[a-f0-9-]{36}$/.test(args[3])
+    || args[2] === '--board-host' && /^[a-z0-9-]+\.ttcportals\.com$/.test(args[3])));
   const validApply = args.length === 6 && args[0] === '--apply' && args[2] === '--selection-hash'
     && /^[a-f0-9]{64}$/.test(args[3]) && args[4] === '--receipt';
-  if (!validPreview && !validApply) throw new Error('Usage: repair_talemetry_company_names.ts --plan <file> [--job-id <uuid>] | --apply <file> --selection-hash <hash> --receipt <file>');
+  if (!validPreview && !validApply) throw new Error('Usage: repair_talemetry_company_names.ts --plan <file> [--job-id <uuid> | --board-host <host>] | --apply <file> --selection-hash <hash> --receipt <file>');
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
   const client = new Client({ connectionString: buildRuntimeDatabaseUrl(process.env.DATABASE_URL, process.env.DATABASE_RUNTIME_HOST) });
   await client.connect();
   try {
-    if (validPreview) await preview(client, args[1], args[3]);
+    if (validPreview) await preview(client, args[1], args[2] === '--job-id' ? args[3] : undefined,
+      args[2] === '--board-host' ? args[3] : undefined);
     else await apply(client, args[1], args[3], args[5]);
   } finally { await client.end(); }
 }
