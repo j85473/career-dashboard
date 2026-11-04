@@ -28,5 +28,8 @@ test('attachment buttons use the displayed company and document purpose while re
   assert.match(html, /href="\/api\/jobs\/sky\/attachments\/prep\?inline=1"/);
   assert.match(html, /download="Skykit - First Round Prep - 2026-11-04.pdf"/);
   assert.match(html, /download="document.docx"/);
+  const pdfLinks = html.match(/<a class="job-attachment-link"[^>]*aria-haspopup="dialog"[^>]*>/g) || [];
+  assert.equal(pdfLinks.length, 2);
+  for (const link of pdfLinks) assert.doesNotMatch(link, /target="_blank"/);
   assert.doesNotMatch(html, />document.docx<\/a>|>Skykit - First Round Prep/);
 });

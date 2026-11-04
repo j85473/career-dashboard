@@ -3,9 +3,10 @@
 import { useRef, useState } from 'react';
 import { Download, Paperclip, X } from 'lucide-react';
 import { showConfirm } from '@/lib/modal';
-import type { JobListItem } from '@/types/job';
+import type { JobAttachmentItem, JobListItem } from '@/types/job';
 import { jobAttachmentKind } from '@/lib/jobAttachmentKind';
 import { companyDisplayName } from '@/lib/companyPresentation';
+import { JobDocumentPreview } from '@/components/JobDocumentPreview';
 
 export function JobDocuments({ job, onJobUpdate }: {
   job: JobListItem;
@@ -16,6 +17,7 @@ export function JobDocuments({ job, onJobUpdate }: {
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [preview, setPreview] = useState<JobAttachmentItem | null>(null);
   const attachments = job.attachments || [];
   const company = job.employer || companyDisplayName(job.company, job.source);
   const busy = uploading || removing !== null;
@@ -82,10 +84,13 @@ export function JobDocuments({ job, onJobUpdate }: {
         {attachments.map(attachment => {
           const url = `/api/jobs/${job.id}/attachments/${attachment.id}`;
           const label = `${company} ${jobAttachmentKind(attachment) === 'prep' ? 'interview prep' : 'job description'}`;
+          const isPdf = attachment.mimeType === 'application/pdf';
           const previewable = attachment.mimeType === 'application/pdf' || attachment.mimeType.startsWith('text/plain');
           return <li key={attachment.id} className="job-attachment-item">
             <a className="job-attachment-link" href={previewable ? `${url}?inline=1` : url}
-              target={previewable ? '_blank' : undefined} rel={previewable ? 'noopener noreferrer' : undefined}
+              target={previewable && !isPdf ? '_blank' : undefined} rel={previewable && !isPdf ? 'noopener noreferrer' : undefined}
+              aria-haspopup={isPdf ? 'dialog' : undefined}
+              onClick={isPdf ? event => { event.preventDefault(); setPreview(attachment); } : undefined}
               download={previewable ? undefined : attachment.fileName}
               title={`${previewable ? 'Open' : 'Download'} ${label} · ${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
               {label}
@@ -99,6 +104,12 @@ export function JobDocuments({ job, onJobUpdate }: {
         })}
       </ul>}
       {error && <p className="job-document-error" role="alert">{error}</p>}
+      {preview && <JobDocumentPreview
+        url={`/api/jobs/${job.id}/attachments/${preview.id}`}
+        label={`${company} ${jobAttachmentKind(preview) === 'prep' ? 'interview prep' : 'job description'}`}
+        fileName={preview.fileName}
+        onClose={() => setPreview(null)}
+      />}
     </section>
   );
 }
