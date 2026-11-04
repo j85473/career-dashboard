@@ -290,7 +290,10 @@ body {
 }
 
 .card-identity { display: flex; flex-direction: column; gap: 3px; }
-.card-company { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.card-company-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; min-width: 0; }
+.card-company-identity { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.card-company { min-width: 0; overflow-wrap: anywhere; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.card-status-date { flex: 0 0 auto; max-width: 100%; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .company-mark {
   width: 18px;
   height: 18px;
@@ -1538,7 +1541,6 @@ body {
 
 .job-documents { min-width: 0; }
 .job-documents-heading { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 7px; }
-.job-documents-help { font-size: 10px; color: var(--text-muted); margin-top: 6px; }
 .job-jd-capture { margin-top: 8px; }
 .job-jd-capture p { margin: 0 0 6px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .job-prep-pack-upload { color: #60a5fa; }

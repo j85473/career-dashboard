@@ -148,8 +148,8 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
         </div>
       )}
       <div className="card-identity">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div className="card-company-row">
+          <div className="card-company-identity">
             {job.company && (
               <div className="company-mark" style={{ position: 'relative', padding: 0, overflow: 'hidden' }}>
                 <CompanyLogo company={companyLabel} url={job.url} canonicalUrl={job.canonicalUrl} jobId={job.id} />
@@ -158,7 +158,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
             <div className="card-company" title={companyLabel !== job.company ? `Listed employer: ${job.company}` : undefined}>{companyLabel}</div>
           </div>
           {(job.status === 'applied' || job.status === 'interviewing') && (
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div className="card-status-date">
               {nextInterviewAt
                 ? <>Interview {format(nextInterviewAt, 'MMM d, yyyy')}</>
                 : <>Applied {job.appliedAt ? format(new Date(job.appliedAt), 'MMM d, yyyy') : ''}</>}

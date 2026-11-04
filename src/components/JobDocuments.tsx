@@ -180,7 +180,6 @@ export function JobDocuments({ job, onJobUpdate }: {
           <Paperclip size={14} /> {uploading && uploadKind === 'transcript' ? 'Uploading…' : 'Attach transcripts'}
         </button>
       </div>
-      <div className="job-documents-help">Select one or more PDF, DOCX, TXT, VTT or SRT files · Up to 10 MB each · 20 documents per card</div>
       {job.status === 'interviewing' && !hasJd && <div className="job-jd-capture">
         {captureError && <p role="status">{captureError}</p>}
         {captureBusy || capture?.status === 'queued' || capture?.status === 'capturing'
