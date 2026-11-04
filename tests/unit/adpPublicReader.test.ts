@@ -1,3 +1,4 @@
+import { fetchAdpPosting } from '../../src/lib/adpPosting';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AdpPublicReader, adpEmployerWebsite } from '../../src/lib/adpPublicReader';
@@ -23,7 +24,7 @@ const client = { meta: { customFieldGroup: { stringFields: [
 function harness(options: { total?: number; jobs?: unknown[]; center?: unknown; company?: string; siteHtml?: string; siteLanded?: string; redirectJson?: boolean; description?: string;
     clientFailure?: 'network' | 'status' | 'invalid-json'; centerFailure?: boolean; websiteFailure?: boolean } = {}) {
     const calls: string[] = [];
-    const reader = new AdpPublicReader(board, async () => {}, async target => {
+    const fetcher = async (target: string) => {
         calls.push(target);
         const url = new URL(target);
         if (url.origin === new URL(site).origin) {
@@ -53,8 +54,9 @@ function harness(options: { total?: number; jobs?: unknown[]; center?: unknown; 
         const response = Response.json(body);
         Object.defineProperty(response, 'url', { value: options.redirectJson ? 'https://other.example/metadata' : target });
         return response;
-    });
-    return { reader, calls };
+    };
+    const reader = new AdpPublicReader(board, async () => {}, fetcher);
+    return { reader, calls, fetcher };
 }
 
 test('ADP recovers a named employer from its published corporate website and shares the lookup across a turn', async () => {
@@ -210,4 +212,23 @@ test('a pause before the corporate website request still stops ADP collection', 
     });
     await assert.rejects(reader.detail(link()), /Collection paused/);
     assert.equal(requests, 3);
+});
+
+test('ADP crawler and individual imports resolve the same employer from the same source evidence', async () => {
+    for (const options of [
+        {}, { company: 'Configured Employer' }, { clientFailure: 'network' as const },
+        { siteHtml: '<title>Corning Credit Union</title>', description: 'Corning Credit Union is hiring a manager. ' + description },
+        { center: center([site, 'https://unrelated.example/']) }, { centerFailure: true },
+        { websiteFailure: true }, { siteLanded: 'https://unrelated.example/' },
+        { description: '<h2>About Verified Employer</h2><p>At Verified Employer, we help customers.</p>' },
+    ]) {
+        const crawl = harness(options), individual = harness(options);
+        const acquired = await crawl.reader.detail(link());
+        const imported = await fetchAdpPosting(link().url, async target => individual.fetcher(String(target)));
+        assert.ok(imported);
+        assert.equal(acquired.company, imported.company || 'Unknown Company');
+        assert.equal(acquired.title, imported.title);
+        assert.equal(acquired.description, imported.text);
+        assert.deepEqual(crawl.calls, individual.calls, 'both entry points use the same fallback order');
+    }
 });
