@@ -16,6 +16,7 @@ import { companyDisplayName } from '@/lib/companyPresentation';
 import { CompanyLogo } from '@/components/CompanyLogo';
 import { InterviewSchedule } from '@/components/InterviewSchedule';
 import { JobDocuments } from '@/components/JobDocuments';
+import { interviewSortKey } from '@/lib/jobInterviewSchedule';
 
 
 
@@ -28,6 +29,12 @@ interface JobCardProps {
   showStatusBadge?: boolean;
 }
 function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusBadge = false }: JobCardProps) {
+  const [now, setNow] = React.useState(Date.now);
+  React.useEffect(() => {
+    if (job.status !== 'interviewing' || !job.interviews?.length) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [job.status, job.interviews]);
   const isPromptHealthPriority = isPromptHealthPriorityRole(job);
   const isAcostaPriority = isAcostaChannelSalesPriorityRole(job);
   const hasCurrentScoreAuthority = job.scoreAuthorityState === 'current';
@@ -39,6 +46,9 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason) || job.combinedInto?.alreadyApplied;
   const isCombinedCopy = consolidatedIntoJobId(job.passReason) !== null;
   const companyLabel = job.employer || companyDisplayName(job.company, job.source);
+  const [interviewTiming, interviewAt] = interviewSortKey(job, now);
+  const nextInterviewAt = job.status === 'interviewing' && interviewTiming === 0
+    ? new Date(interviewAt) : null;
 
   const updateJob = async (updates: Partial<JobListItem>) => {
     try {
@@ -149,7 +159,9 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           </div>
           {(job.status === 'applied' || job.status === 'interviewing') && (
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Applied {job.appliedAt ? format(new Date(job.appliedAt), 'MMM d, yyyy') : ''}
+              {nextInterviewAt
+                ? <>Interview {format(nextInterviewAt, 'MMM d, yyyy')}</>
+                : <>Applied {job.appliedAt ? format(new Date(job.appliedAt), 'MMM d, yyyy') : ''}</>}
             </div>
           )}
         </div>

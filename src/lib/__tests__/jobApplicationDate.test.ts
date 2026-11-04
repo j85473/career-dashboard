@@ -100,3 +100,36 @@ test('a card with no recorded application date does not display its last edit as
   assert.match(html, /Applied /);
   assert.doesNotMatch(html, /Applied Oct/);
 });
+
+test('Interviewing cards show the next upcoming round in the top right', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-04T15:00:00Z') });
+  const html = renderToStaticMarkup(React.createElement(JobCard, {
+    job: { id: 'rounds', title: 'Sales Manager', company: 'Employer', status: 'interviewing',
+      appliedAt: appliedAt.toISOString(), interviews: [
+        { id: 'later', scheduledAt: '2026-11-06T18:00:00Z', label: 'Final round' },
+        { id: 'past', scheduledAt: '2026-11-03T18:00:00Z', label: 'Recruiter' },
+        { id: 'next', scheduledAt: '2026-11-04T18:00:00Z', label: 'Hiring manager' },
+      ] },
+    onSelect: () => {},
+  }));
+  const header = html.slice(0, html.indexOf('card-title'));
+  assert.match(header, /Interview Nov 4, 2026/);
+  assert.doesNotMatch(header, /Applied|Nov 3|Nov 6/);
+});
+
+test('past rounds fall back to Applied and upcoming rounds do not replace dates on Applied cards', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-04T15:00:00Z') });
+  for (const [status, scheduledAt] of [
+    ['interviewing', '2026-11-03T18:00:00Z'],
+    ['applied', '2026-11-05T18:00:00Z'],
+  ]) {
+    const html = renderToStaticMarkup(React.createElement(JobCard, {
+      job: { id: 'fallback', title: 'Sales Manager', company: 'Employer', status,
+        appliedAt: appliedAt.toISOString(), interviews: [{ id: 'round', scheduledAt, label: '' }] },
+      onSelect: () => {},
+    }));
+    const header = html.slice(0, html.indexOf('card-title'));
+    assert.match(header, /Applied Oct 12, 2026/);
+    assert.doesNotMatch(header, /Interview /);
+  }
+});
