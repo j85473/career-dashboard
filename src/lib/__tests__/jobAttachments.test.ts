@@ -16,3 +16,11 @@ test('uploaded filenames cannot contain paths or response-header controls', () =
   assert.equal(cleanAttachmentFileName('C:\\fakepath\\JD\r\n.pdf'), 'JD.pdf');
   assert.equal(cleanAttachmentFileName('../../posting.pdf'), 'posting.pdf');
 });
+
+test('caption transcripts remain UTF-8 text and never become HTML', () => {
+  assert.equal(attachmentMimeType('interview.vtt', Buffer.from('WEBVTT\n\nInterviewer: Welcome.')), 'text/vtt; charset=utf-8');
+  assert.equal(attachmentMimeType('interview.srt', Buffer.from('1\n00:00:00,000 --> 00:00:01,000\nWelcome.')), 'text/plain; charset=utf-8');
+  assert.equal(attachmentMimeType('interview.vtt', Buffer.from([0xff])), null);
+  assert.equal(attachmentMimeType('interview.srt', Buffer.from([0])), null);
+  assert.equal(attachmentMimeType('interview.html', Buffer.from('<script>alert(1)</script>')), null);
+});

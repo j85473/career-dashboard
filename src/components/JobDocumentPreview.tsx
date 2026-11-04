@@ -4,11 +4,13 @@ import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Download, X } from 'lucide-react';
 import { PdfDocumentViewer } from '@/components/PdfDocumentViewer';
+import { TextDocumentViewer } from '@/components/TextDocumentViewer';
 
-export function JobDocumentPreview({ url, label, fileName, onClose }: {
+export function JobDocumentPreview({ url, label, fileName, mimeType = 'application/pdf', onClose }: {
   url: string;
   label: string;
   fileName: string;
+  mimeType?: string;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -39,7 +41,9 @@ export function JobDocumentPreview({ url, label, fileName, onClose }: {
           <button type="button" onClick={onClose} aria-label="Close document preview"><X size={20} /></button>
         </div>
       </header>
-      <PdfDocumentViewer url={`${url}?inline=1`} label={label} />
+      {mimeType.startsWith('text/')
+        ? <TextDocumentViewer url={`${url}?inline=1`} label={label} />
+        : <PdfDocumentViewer url={`${url}?inline=1`} label={label} />}
     </dialog>,
     document.body,
   );

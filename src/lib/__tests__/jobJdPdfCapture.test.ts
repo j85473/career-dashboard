@@ -53,6 +53,12 @@ test('existing JDs skip capture, prep packs do not, and duplicate workers save o
   assert.equal(f.attachments[0].id, 'prep');
 });
 
+test('an interview transcript does not suppress automatic JD capture', async () => {
+  const f = fixture();
+  f.attachments.push({ id: 'transcript', kind: 'transcript', fileName: 'Interview transcript.pdf' });
+  assert.equal((await requestJobJdPdfCapture('job', f.store)).shouldRun, true);
+});
+
 test('failed capture stays retryable without using saved text or changing Interviewing', async () => {
   const f = fixture(); const queued = await requestJobJdPdfCapture('job', f.store);
   await runJobJdPdfCapture('job', queued.capture!.attemptId, f.store, async () => { throw new Error('The canonical page returned HTTP 403.'); });

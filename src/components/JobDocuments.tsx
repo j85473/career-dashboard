@@ -4,17 +4,20 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, Paperclip, X } from 'lucide-react';
 import { showConfirm } from '@/lib/modal';
 import type { JobAttachmentItem, JobListItem } from '@/types/job';
-import { jobAttachmentKind } from '@/lib/jobAttachmentKind';
+import { jobAttachmentKind, jobAttachmentLabel, newestJobAttachments, type JobAttachmentKind } from '@/lib/jobAttachmentKind';
 import { companyDisplayName } from '@/lib/companyPresentation';
 import { JobDocumentPreview } from '@/components/JobDocumentPreview';
 import type { JobJdPdfCapture } from '@/lib/jobJdPdfCaptureState';
+
+const NO_ATTACHMENTS: JobAttachmentItem[] = [];
 
 export function JobDocuments({ job, onJobUpdate }: {
   job: JobListItem;
   onJobUpdate?: (jobId: string, updates: Partial<JobListItem>) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [uploadKind, setUploadKind] = useState<'jd' | 'prep'>('prep');
+  const [uploadKind, setUploadKind] = useState<JobAttachmentKind>('prep');
+  const uploadKindRef = useRef<JobAttachmentKind>('prep');
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -22,7 +25,13 @@ export function JobDocuments({ job, onJobUpdate }: {
   const [capture, setCapture] = useState<JobJdPdfCapture | null>(null);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState('');
-  const attachments = job.attachments || [];
+  const attachments = job.attachments || NO_ATTACHMENTS;
+  const attachmentsRef = useRef(attachments);
+  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
+  const ordered = newestJobAttachments(attachments);
+  const prepPacks = ordered.filter(attachment => jobAttachmentKind(attachment) === 'prep');
+  const transcripts = ordered.filter(attachment => jobAttachmentKind(attachment) === 'transcript');
+  const descriptions = ordered.filter(attachment => jobAttachmentKind(attachment) === 'jd');
   const company = job.employer || companyDisplayName(job.company, job.source);
   const busy = uploading || removing !== null;
   const hasJd = attachments.some(attachment => jobAttachmentKind(attachment) === 'jd');
@@ -72,28 +81,66 @@ export function JobDocuments({ job, onJobUpdate }: {
     } finally { setCaptureBusy(false); }
   };
 
-  const upload = async (file: File) => {
-    if (file.size > 10 * 1024 * 1024) {
-      setError('Documents must be 10 MB or smaller.');
-      if (input.current) input.current.value = '';
-      return;
-    }
+  const chooseFiles = (kind: JobAttachmentKind) => {
+    uploadKindRef.current = kind;
+    setUploadKind(kind);
+    input.current?.click();
+  };
+
+  const upload = async (files: File[]) => {
+    const kind = uploadKindRef.current;
     setUploading(true);
     setError('');
+    const failures: string[] = [];
     try {
-      const form = new FormData();
-      form.set('file', file);
-      form.set('kind', uploadKind);
-      const response = await fetch(`/api/jobs/${job.id}/attachments`, { method: 'POST', body: form });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'The document could not be uploaded.');
-      onJobUpdate?.(job.id, { attachments: [data.attachment, ...attachments] });
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'The document could not be uploaded.');
+      for (const file of files) {
+        try {
+          if (file.size > 10 * 1024 * 1024) throw new Error('Documents must be 10 MB or smaller.');
+          const form = new FormData();
+          form.set('file', file);
+          form.set('kind', kind);
+          const response = await fetch(`/api/jobs/${job.id}/attachments`, { method: 'POST', body: form });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || 'The document could not be uploaded.');
+          const next = newestJobAttachments<JobAttachmentItem>(data.attachments || [data.attachment, ...attachmentsRef.current]);
+          attachmentsRef.current = next;
+          updateRef.current?.(job.id, { attachments: next });
+        } catch (failure) {
+          failures.push(`${file.name}: ${failure instanceof Error ? failure.message : 'The document could not be uploaded.'}`);
+        }
+      }
     } finally {
+      setError(failures.join('\n'));
       setUploading(false);
       if (input.current) input.current.value = '';
     }
+  };
+
+  const attachmentRow = (attachment: JobAttachmentItem, label: string, showFileName = false) => {
+    const url = `/api/jobs/${job.id}/attachments/${attachment.id}`;
+    const previewable = attachment.mimeType === 'application/pdf' || attachment.mimeType.startsWith('text/');
+    const validDate = Number.isFinite(Date.parse(attachment.uploadedAt));
+    const added = validDate ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', timeZoneName: 'short', timeZone: 'America/Chicago' }).format(new Date(attachment.uploadedAt)) : '';
+    return <li key={attachment.id} className="job-document-entry">
+      <div className="job-attachment-item">
+        <a className="job-attachment-link" href={previewable ? `${url}?inline=1` : url}
+          aria-haspopup={previewable ? 'dialog' : undefined}
+          onClick={previewable ? event => { event.preventDefault(); setPreview(attachment); } : undefined}
+          download={previewable ? undefined : attachment.fileName}
+          title={`${previewable ? 'Open' : 'Download'} ${label} · ${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
+          {label}
+        </a>
+        <a className="job-attachment-download" href={url} download={attachment.fileName}
+          aria-label={`Download ${label}`} title={`Download ${attachment.fileName}`}><Download size={13} /></a>
+        <button type="button" className="job-attachment-remove" disabled={busy}
+          aria-label={`Remove ${attachment.fileName} from ${job.title}`} title={`Remove ${attachment.fileName}`}
+          onClick={() => void remove(attachment.id, attachment.fileName)}><X size={12} /></button>
+      </div>
+      {(showFileName || added) && <div className="job-document-meta">
+        {showFileName && attachment.fileName}{showFileName && added ? ' · ' : ''}{added && `Added ${added}`}
+      </div>}
+    </li>;
   };
 
   const remove = async (attachmentId: string, fileName: string) => {
@@ -116,20 +163,24 @@ export function JobDocuments({ job, onJobUpdate }: {
     <section className="job-documents" aria-label={`Documents for ${job.title}`} onClick={event => event.stopPropagation()}>
       <div className="job-documents-heading">Documents</div>
       <div className="job-card-attachments">
-        <input ref={input} className="job-attachment-file-input" type="file"
-          accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+        <input ref={input} className="job-attachment-file-input" type="file" multiple
+          accept=".pdf,.docx,.txt,.vtt,.srt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/vtt"
           aria-label={`Choose a document for ${job.title} at ${job.employer || job.company}`}
-          disabled={busy} onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void upload(file); }} />
+          disabled={busy} onChange={event => { const files = Array.from(event.currentTarget.files || []); if (files.length) void upload(files); }} />
         <button type="button" className="job-attachment-upload" disabled={busy}
-          onClick={() => { setUploadKind('jd'); input.current?.click(); }}>
+          onClick={() => chooseFiles('jd')}>
           <Paperclip size={14} /> {uploading && uploadKind === 'jd' ? 'Uploading…' : 'Attach JD'}
         </button>
         <button type="button" className="job-attachment-upload job-prep-pack-upload" disabled={busy}
-          onClick={() => { setUploadKind('prep'); input.current?.click(); }}>
+          onClick={() => chooseFiles('prep')}>
           <Paperclip size={14} /> {uploading && uploadKind === 'prep' ? 'Uploading…' : 'Attach prep pack'}
         </button>
+        <button type="button" className="job-attachment-upload" disabled={busy}
+          onClick={() => chooseFiles('transcript')}>
+          <Paperclip size={14} /> {uploading && uploadKind === 'transcript' ? 'Uploading…' : 'Attach transcripts'}
+        </button>
       </div>
-      <div className="job-documents-help">PDF, DOCX or TXT · Up to 10 MB each</div>
+      <div className="job-documents-help">Select one or more PDF, DOCX, TXT, VTT or SRT files · Up to 10 MB each · 20 documents per card</div>
       {job.status === 'interviewing' && !hasJd && <div className="job-jd-capture">
         {captureError && <p role="status">{captureError}</p>}
         {captureBusy || capture?.status === 'queued' || capture?.status === 'capturing'
@@ -141,34 +192,24 @@ export function JobDocuments({ job, onJobUpdate }: {
             </button>
           </>}
       </div>}
-      {attachments.length > 0 && <ul className="job-document-list">
-        {attachments.map(attachment => {
-          const url = `/api/jobs/${job.id}/attachments/${attachment.id}`;
-          const label = `${company} ${jobAttachmentKind(attachment) === 'prep' ? 'interview prep' : 'job description'}`;
-          const isPdf = attachment.mimeType === 'application/pdf';
-          const previewable = attachment.mimeType === 'application/pdf' || attachment.mimeType.startsWith('text/plain');
-          return <li key={attachment.id} className="job-attachment-item">
-            <a className="job-attachment-link" href={previewable ? `${url}?inline=1` : url}
-              target={previewable && !isPdf ? '_blank' : undefined} rel={previewable && !isPdf ? 'noopener noreferrer' : undefined}
-              aria-haspopup={isPdf ? 'dialog' : undefined}
-              onClick={isPdf ? event => { event.preventDefault(); setPreview(attachment); } : undefined}
-              download={previewable ? undefined : attachment.fileName}
-              title={`${previewable ? 'Open' : 'Download'} ${label} · ${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
-              {label}
-            </a>
-            <a className="job-attachment-download" href={url} download={attachment.fileName}
-              aria-label={`Download ${label}`} title={`Download ${attachment.fileName}`}><Download size={13} /></a>
-            <button type="button" className="job-attachment-remove" disabled={busy}
-              aria-label={`Remove ${attachment.fileName} from ${job.title}`} title={`Remove ${attachment.fileName}`}
-              onClick={() => void remove(attachment.id, attachment.fileName)}><X size={12} /></button>
-          </li>;
-        })}
+      {(prepPacks.length > 0 || descriptions.length > 0) && <ul className="job-document-list">
+        {prepPacks[0] && attachmentRow(prepPacks[0], jobAttachmentLabel(company, prepPacks[0]), true)}
+        {descriptions.map(attachment => attachmentRow(attachment, jobAttachmentLabel(company, attachment)))}
       </ul>}
+      {prepPacks.length > 1 && <details className="job-document-history">
+        <summary>Older prep packs ({prepPacks.length - 1})</summary>
+        <ul className="job-document-list">{prepPacks.slice(1).map(attachment => attachmentRow(attachment, attachment.fileName))}</ul>
+      </details>}
+      {transcripts.length > 0 && <div className="job-document-transcripts">
+        <div className="job-documents-heading">Interview transcripts ({transcripts.length})</div>
+        <ul className="job-document-list">{transcripts.map(attachment => attachmentRow(attachment, attachment.fileName))}</ul>
+      </div>}
       {error && <p className="job-document-error" role="alert">{error}</p>}
       {preview && <JobDocumentPreview
         url={`/api/jobs/${job.id}/attachments/${preview.id}`}
-        label={`${company} ${jobAttachmentKind(preview) === 'prep' ? 'interview prep' : 'job description'}`}
+        label={jobAttachmentLabel(company, preview)}
         fileName={preview.fileName}
+        mimeType={preview.mimeType}
         onClose={() => setPreview(null)}
       />}
     </section>

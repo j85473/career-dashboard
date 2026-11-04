@@ -10,7 +10,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   });
   if (!attachment) return NextResponse.json({ error: 'Document not found on this job.' }, { status: 404 });
   const encodedName = encodeURIComponent(attachment.fileName);
-  const previewable = attachment.mimeType === 'application/pdf' || attachment.mimeType.startsWith('text/plain');
+  const previewable = attachment.mimeType === 'application/pdf' || attachment.mimeType.startsWith('text/');
   const disposition = new URL(request.url).searchParams.get('inline') === '1' && previewable ? 'inline' : 'attachment';
   return new Response(new Uint8Array(attachment.content), {
     headers: {

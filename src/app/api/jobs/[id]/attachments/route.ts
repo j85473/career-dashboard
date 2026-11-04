@@ -35,7 +35,7 @@ export async function POST(request: Request, context: Context) {
 
   let form: FormData;
   try { form = await request.formData(); }
-  catch { return NextResponse.json({ error: 'Upload a PDF, DOCX, or TXT document.' }, { status: 400 }); }
+  catch { return NextResponse.json({ error: 'Upload a PDF, DOCX, TXT, VTT, or SRT document.' }, { status: 400 }); }
   const file = form.get('file');
   if (!(file instanceof File) || !file.name || file.size === 0) {
     return NextResponse.json({ error: 'Choose a document to upload.' }, { status: 400 });
@@ -45,25 +45,32 @@ export async function POST(request: Request, context: Context) {
   }
   const fileName = cleanAttachmentFileName(file.name);
   const requestedKind = form.get('kind');
-  if (requestedKind !== null && requestedKind !== 'jd' && requestedKind !== 'prep') {
-    return NextResponse.json({ error: 'Choose a job description or interview prep document.' }, { status: 400 });
+  if (requestedKind !== null && requestedKind !== 'jd' && requestedKind !== 'prep' && requestedKind !== 'transcript') {
+    return NextResponse.json({ error: 'Choose a job description, interview prep, or interview transcript.' }, { status: 400 });
   }
   const kind = jobAttachmentKind({ kind: requestedKind, fileName });
   const content = Buffer.from(await file.arrayBuffer());
   const mimeType = attachmentMimeType(fileName, content);
   if (!mimeType) {
-    return NextResponse.json({ error: 'Only valid PDF, DOCX, and UTF-8 TXT documents are supported.' }, { status: 400 });
+    return NextResponse.json({ error: 'Only valid PDF, DOCX, and UTF-8 TXT, VTT, or SRT documents are supported.' }, { status: 400 });
   }
-  const attachment = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     // Serialize concurrent uploads for this job so the per-job limit holds.
     await tx.$queryRaw`SELECT id FROM "Job" WHERE id = ${id} FOR UPDATE`;
     const count = await tx.jobAttachment.count({ where: { jobId: id } });
     if (count >= MAX_JOB_ATTACHMENTS) return null;
-    return tx.jobAttachment.create({
-      data: { jobId: id, fileName, kind, mimeType, sizeBytes: content.length, content },
+    const latest = await tx.jobAttachment.findFirst({ where: { jobId: id }, orderBy: { uploadedAt: 'desc' }, select: { uploadedAt: true } });
+    // Transaction-start timestamps can arrive out of order after waiting on the
+    // row lock. Assign a monotonic time while holding it so newest is unambiguous.
+    const uploadedAt = new Date(Math.max(Date.now(), (latest?.uploadedAt.getTime() || 0) + 1));
+    const attachment = await tx.jobAttachment.create({
+      data: { jobId: id, fileName, kind, mimeType, sizeBytes: content.length, content, uploadedAt },
       select: jobAttachmentSelect,
     });
+    const attachments = await tx.jobAttachment.findMany({ where: { jobId: id }, select: jobAttachmentSelect,
+      orderBy: [{ uploadedAt: 'desc' }, { id: 'desc' }] });
+    return { attachment, attachments };
   });
-  if (!attachment) return NextResponse.json({ error: 'This job already has 20 documents.' }, { status: 409 });
-  return NextResponse.json({ attachment }, { status: 201, headers: { 'Cache-Control': 'private, no-store' } });
+  if (!result) return NextResponse.json({ error: 'This job already has 20 documents.' }, { status: 409 });
+  return NextResponse.json(result, { status: 201, headers: { 'Cache-Control': 'private, no-store' } });
 }

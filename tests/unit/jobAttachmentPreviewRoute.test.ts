@@ -45,3 +45,11 @@ test('text prep notes can open inline, while Word files always download', async 
   assert.equal(response.status, 404);
   assert.deepEqual(query, { where: { id: 'prep-a', jobId: 'foreign-job' } });
 });
+
+test('VTT transcripts keep their text content type and can be previewed inline', async () => {
+  found = true; mimeType = 'text/vtt; charset=utf-8';
+  const response = await (await route).GET(new Request('http://localhost/api/jobs/job-a/attachments/prep-a?inline=1'), context);
+  assert.match(response.headers.get('Content-Disposition')!, /^inline;/);
+  assert.equal(response.headers.get('Content-Type'), 'text/vtt; charset=utf-8');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), content);
+});

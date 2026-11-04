@@ -48,7 +48,7 @@ export type ScoreAuthorityState = 'current' | 'stale_replay_needed' | 'unscored'
 export interface JobAttachmentItem {
   id: string;
   fileName: string;
-  kind?: 'jd' | 'prep' | null;
+  kind?: 'jd' | 'prep' | 'transcript' | null;
   mimeType: string;
   sizeBytes: number;
   uploadedAt: string;

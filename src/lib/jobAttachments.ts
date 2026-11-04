@@ -22,9 +22,9 @@ export function attachmentMimeType(fileName: string, bytes: Uint8Array): string 
   if (extension === 'docx' && bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
     return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   }
-  if (extension === 'txt' && !bytes.includes(0)) {
+  if (extension && ['txt', 'vtt', 'srt'].includes(extension) && !bytes.includes(0)) {
     const decoded = new TextDecoder('utf-8', { fatal: true });
-    try { decoded.decode(bytes); return 'text/plain; charset=utf-8'; } catch { return null; }
+    try { decoded.decode(bytes); return extension === 'vtt' ? 'text/vtt; charset=utf-8' : 'text/plain; charset=utf-8'; } catch { return null; }
   }
   return null;
 }
