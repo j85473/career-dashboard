@@ -1,12 +1,13 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, Paperclip, X } from 'lucide-react';
 import { showConfirm } from '@/lib/modal';
 import type { JobAttachmentItem, JobListItem } from '@/types/job';
 import { jobAttachmentKind } from '@/lib/jobAttachmentKind';
 import { companyDisplayName } from '@/lib/companyPresentation';
 import { JobDocumentPreview } from '@/components/JobDocumentPreview';
+import type { JobJdPdfCapture } from '@/lib/jobJdPdfCaptureState';
 
 export function JobDocuments({ job, onJobUpdate }: {
   job: JobListItem;
@@ -18,9 +19,58 @@ export function JobDocuments({ job, onJobUpdate }: {
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState<JobAttachmentItem | null>(null);
+  const [capture, setCapture] = useState<JobJdPdfCapture | null>(null);
+  const [captureBusy, setCaptureBusy] = useState(false);
+  const [captureError, setCaptureError] = useState('');
   const attachments = job.attachments || [];
   const company = job.employer || companyDisplayName(job.company, job.source);
   const busy = uploading || removing !== null;
+  const hasJd = attachments.some(attachment => jobAttachmentKind(attachment) === 'jd');
+  const updateRef = useRef(onJobUpdate);
+  useEffect(() => { updateRef.current = onJobUpdate; }, [onJobUpdate]);
+
+  useEffect(() => {
+    if (job.status !== 'interviewing' || hasJd) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/jobs/${job.id}/jd-pdf`, { signal: controller.signal, cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not check JD capture.');
+        if (controller.signal.aborted) return;
+        setCaptureError('');
+        setCapture(data.capture);
+        if (data.attachments?.some((item: JobAttachmentItem) => jobAttachmentKind(item) === 'jd')) {
+          updateRef.current?.(job.id, { attachments: data.attachments });
+        } else if (data.capture && ['queued', 'capturing'].includes(data.capture.status)) {
+          timer = setTimeout(() => { void poll(); }, 2000);
+        }
+      } catch (failure) {
+        if (!controller.signal.aborted) {
+          setCaptureError(failure instanceof Error ? failure.message : 'Could not check JD capture.');
+          timer = setTimeout(() => { void poll(); }, 3000);
+        }
+      }
+    };
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [job.id, job.status, hasJd, captureBusy]);
+
+  const retryCapture = async () => {
+    setCaptureBusy(true);
+    setCaptureError('');
+    setError('');
+    try {
+      const response = await fetch(`/api/jobs/${job.id}/jd-pdf`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not start JD capture.');
+      setCapture(data.capture);
+      if (data.attachments) updateRef.current?.(job.id, { attachments: data.attachments });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Could not start JD capture.');
+    } finally { setCaptureBusy(false); }
+  };
 
   const upload = async (file: File) => {
     if (file.size > 10 * 1024 * 1024) {
@@ -80,6 +130,17 @@ export function JobDocuments({ job, onJobUpdate }: {
         </button>
       </div>
       <div className="job-documents-help">PDF, DOCX or TXT · Up to 10 MB each</div>
+      {job.status === 'interviewing' && !hasJd && <div className="job-jd-capture">
+        {captureError && <p role="status">{captureError}</p>}
+        {captureBusy || capture?.status === 'queued' || capture?.status === 'capturing'
+          ? <p role="status">Capturing job description from the canonical page…</p>
+          : <>
+            {capture?.status === 'failed' && <p role="status">{capture.error || 'The JD PDF could not be captured.'}</p>}
+            <button type="button" className="job-attachment-upload" disabled={busy} onClick={() => void retryCapture()}>
+              {capture?.status === 'failed' ? 'Retry JD capture' : 'Capture JD from source'}
+            </button>
+          </>}
+      </div>}
       {attachments.length > 0 && <ul className="job-document-list">
         {attachments.map(attachment => {
           const url = `/api/jobs/${job.id}/attachments/${attachment.id}`;

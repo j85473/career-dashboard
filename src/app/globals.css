@@ -1539,6 +1539,8 @@ body {
 .job-documents { min-width: 0; }
 .job-documents-heading { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 7px; }
 .job-documents-help { font-size: 10px; color: var(--text-muted); margin-top: 6px; }
+.job-jd-capture { margin-top: 8px; }
+.job-jd-capture p { margin: 0 0 6px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .job-prep-pack-upload { color: #60a5fa; }
 .job-document-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 8px 0 0; }
 .job-document-list .job-attachment-link { flex: 1; min-width: 0; }

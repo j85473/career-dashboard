@@ -38,3 +38,13 @@ test('event writer uses conflict-safe upsert for deterministic keys', () => {
   assert.match(source, /where: \{ eventKey \}/);
   assert.match(source, /update: \{\}/);
 });
+
+test('only a new Interviewing decision starts source PDF capture after the lifecycle transaction succeeds', () => {
+  const source = route('route.ts');
+  const queue = source.indexOf('await requestJobJdPdfCapture(job.id)');
+  assert.ok(queue > source.indexOf('let job = mutation.job;'));
+  assert.match(source, /status === 'interviewing' && currentJob\.status !== 'interviewing'/);
+  assert.match(source, /job\.status === 'interviewing' && !mutation\.consolidatedJobId/);
+  assert.match(source.slice(queue), /scheduleJobJdPdfCapture\(job\.id, capture\.capture\.attemptId\)/);
+  assert.match(source.slice(queue), /catch \(error\) \{\s+console\.error\('Could not queue canonical JD PDF:'/);
+});

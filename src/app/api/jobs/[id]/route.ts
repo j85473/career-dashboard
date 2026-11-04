@@ -32,6 +32,8 @@ import { presentJobDescription } from '@/lib/jobDescriptionPresentation';
 import { withJobApplicationContext } from '@/lib/jobApplicationContext';
 import { userCanonicalJobUrlFields } from '@/lib/userCanonicalJobUrl';
 import { jobInterviewsSelect } from '@/lib/jobInterviewOrder';
+import { requestJobJdPdfCapture } from '@/lib/jobJdPdfCapture';
+import { scheduleJobJdPdfCapture } from '@/lib/jobJdPdfCaptureBackground';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -447,6 +449,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const latestScores = await latestJobScoreEvents([job.id]);
     const authoritativeJob = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
     const [datedJob] = await withJobApplicationContext([authoritativeJob]);
+    // Only a newly selected Interviewing status starts automatic capture.
+    // Capture failures must not roll back the user's lifecycle decision.
+    if (status === 'interviewing' && currentJob.status !== 'interviewing'
+      && job.status === 'interviewing' && !mutation.consolidatedJobId) {
+      try {
+        const capture = await requestJobJdPdfCapture(job.id);
+        if (capture.shouldRun && capture.capture) scheduleJobJdPdfCapture(job.id, capture.capture.attemptId);
+      } catch (error) {
+        console.error('Could not queue canonical JD PDF:', error);
+      }
+    }
     return NextResponse.json({
       job: datedJob,
       rescoreQueued: mutation.consolidatedJobId ? false : shouldQueueRescore,
