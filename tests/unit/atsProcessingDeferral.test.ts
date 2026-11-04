@@ -100,13 +100,13 @@ test('publisher resumes behind held records and changes only newly sealed segmen
     atsIngestionSegment: {
       findMany: async (input: { where: { status: string } }) => {
         assert.equal(input.where.status, 'sealed');
-        return [{ id: 'healthy-sealed', batchId: 'healthy-board', itemCount: 25 }];
+        return [{ id: 'healthy-sealed', batchId: 'healthy-board', segmentSize: 25, itemCount: 25 }];
       },
-      updateMany: async (input: { where: { id: string; status: string }; data: Record<string, unknown> }) => {
+      updateMany: async (input: { where: { id: { in: string[] }; status: string }; data: Record<string, unknown> }) => {
         assert.equal(input.where.status, 'sealed');
         assert.equal(input.data.status, 'published');
         assert.equal(input.data.nextProcessAt, now);
-        publishedIds.push(input.where.id);
+        publishedIds.push(...input.where.id.in);
         return { count: 1 };
       },
     },

@@ -14,6 +14,7 @@ import {
   enrichAtsListingJob,
   markAtsListingsWithoutDetail,
   readAtsJobEnrichmentMarker,
+  type AtsJobEnrichmentDependencies,
 } from './atsJobEnrichment';
 import { boardSlugFromJobUrl } from './atsBoardYield';
 import {
@@ -335,6 +336,14 @@ async function observedAtsSourceStates(
   return observations;
 }
 
+/** Existing batches retain their stored layout. New Oracle/UKG postings must
+ * not wait for another posting's employer evidence before they can publish. */
+export function atsSegmentSizeForNewBoard(platform: string, requested?: number): number {
+  const fallback = platform === 'oracle' || platform === 'ukg' ? 1 : 25;
+  return Number.isFinite(requested) && requested! > 0
+    ? Math.max(1, Math.min(1_999, Math.floor(requested!))) : fallback;
+}
+
 export async function admitAtsV2Board(input: {
   slug: string;
   platform: string;
@@ -350,7 +359,7 @@ export async function admitAtsV2Board(input: {
   const sweepId = randomUUID();
   const workReceiptId = randomUUID();
   const leaseExpiresAt = new Date(now.getTime() + ATS_LEDGER_WORK_LEASE_MS);
-  const segmentSize = Math.max(1, Math.min(1_999, Math.floor(input.segmentSize || 25)));
+  const segmentSize = atsSegmentSizeForNewBoard(input.platform, input.segmentSize);
 
   try {
     return await runListingClaimTransaction(async (transaction) => {
@@ -1633,7 +1642,7 @@ export async function enrichNextAtsV2DetailItem(input: {
   signal?: AbortSignal;
   requestTimeoutMs: number;
   allowListingPrefix?: boolean;
-}): Promise<'none' | 'terminal' | 'deferred'> {
+}, dependencies: Partial<AtsJobEnrichmentDependencies> = {}): Promise<'none' | 'terminal' | 'deferred'> {
   const now = new Date();
   const item = await runLedgerTransaction(async (transaction) => {
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
@@ -1695,7 +1704,7 @@ export async function enrichNextAtsV2DetailItem(input: {
           data: { detailRequestCount: { increment: 1 }, heartbeatAt: new Date() },
         });
       },
-    });
+    }, dependencies);
     const marker = readAtsJobEnrichmentMarker(enriched);
     if (!marker) throw new AtsLedgerAuthorityError('ATS detail result omitted its enrichment marker.');
     const terminalAt = new Date();
@@ -1826,7 +1835,7 @@ export async function sealReadyAtsV2Segments(input: {
         ${sealableCount}::integer
           - candidate."segmentOrdinal" * ${batch.segmentSize}::integer)
        ORDER BY "segmentOrdinal"
-       LIMIT ${ATS_LEDGER_SEAL_SEGMENTS_PER_PASS}
+       LIMIT ${batch.segmentSize === 1 ? ATS_LEDGER_SEAL_SEGMENTS_PER_PASS * 25 : ATS_LEDGER_SEAL_SEGMENTS_PER_PASS}
     `);
     const ranges = ready.map(({ segmentOrdinal }) => {
       const firstOrdinal = segmentOrdinal * batch.segmentSize;
@@ -2000,6 +2009,26 @@ export function planAtsV2PublicationGate(input: {
   };
 }
 
+/** Single-posting handoffs share the same bounded publication budget as the
+ * old 25-posting chunks. Limit batch writes as well as manifests and job credit. */
+export function selectAtsPublicationSegments<T extends { batchId: string; segmentSize: number; itemCount: number }>(
+  segments: readonly T[], maximum: number, availableJobs: number,
+): T[] {
+  const selected: T[] = [];
+  const batches = new Set<string>();
+  let units = 0;
+  for (const segment of segments) {
+    const cost = segment.segmentSize === 1 ? 1 : 25;
+    if (units + cost > maximum * 25 || segment.itemCount > availableJobs
+      || (!batches.has(segment.batchId) && batches.size >= maximum)) break;
+    selected.push(segment);
+    batches.add(segment.batchId);
+    units += cost;
+    availableJobs -= segment.itemCount;
+  }
+  return selected;
+}
+
 export async function publishReadyAtsV2Segments(input: {
   batchId?: string;
   highWatermark: number;
@@ -2040,22 +2069,27 @@ export async function publishReadyAtsV2Segments(input: {
           ...(input.batchId ? { batchId: input.batchId } : {}),
         },
         orderBy: [{ sealedAt: 'asc' }, { batchId: 'asc' }, { segmentOrdinal: 'asc' }],
-        take: maximum,
+        take: maximum * 25,
       });
-      for (const segment of segments) {
-        if (remainingJobs + segment.itemCount > input.highWatermark) break;
+      const selected = selectAtsPublicationSegments(segments, maximum, input.highWatermark - remainingJobs);
+      if (selected.length) {
         const published = await transaction.atsIngestionSegment.updateMany({
-          where: { id: segment.id, status: 'sealed', publishedAt: null },
+          where: { id: { in: selected.map(segment => segment.id) }, status: 'sealed', publishedAt: null },
           data: { status: 'published', publishedAt: now, nextProcessAt: now },
         });
-        if (published.count !== 1) continue;
-        await transaction.atsIngestionBatch.update({
-          where: { id: segment.batchId },
-          data: { publishedItemCount: { increment: segment.itemCount } },
-        });
-        remainingJobs += segment.itemCount;
-        publishedSegments++;
-        publishedItems += segment.itemCount;
+        // The publisher lock and Serializable transaction own this selection.
+        // Any unexpected competing write rolls back all counters and manifests.
+        if (published.count !== selected.length) throw new AtsLedgerAuthorityError('ATS publication selection changed before its checkpoint.');
+        const batchItems = new Map<string, number>();
+        for (const segment of selected) batchItems.set(segment.batchId, (batchItems.get(segment.batchId) || 0) + segment.itemCount);
+        for (const [batchId, itemCount] of batchItems) {
+          await transaction.atsIngestionBatch.update({
+            where: { id: batchId }, data: { publishedItemCount: { increment: itemCount } },
+          });
+          publishedItems += itemCount;
+        }
+        remainingJobs += publishedItems;
+        publishedSegments = published.count;
       }
       gatePlan = planAtsV2PublicationGate({
         previousPaused: gate.publicationPaused,

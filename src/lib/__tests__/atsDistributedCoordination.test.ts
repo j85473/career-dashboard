@@ -191,7 +191,7 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
   const remote = source('scripts/workers/ats-remote-continuation.ts');
   const legacy = source('src/lib/atsAcquisition.ts');
   const ledger = source('src/lib/atsAcquisitionLedger.ts');
-  const provider = source('src/lib/jobIngestion.ts');
+  const provider = source('src/lib/atsProviderRequest.ts');
   const coordination = source('src/lib/atsAcquisitionCoordination.ts');
   const cutoverControl = source('scripts/control_ats_cutover.ts');
   const installer = source('scripts/install-ats-remote-launchagent.mjs');

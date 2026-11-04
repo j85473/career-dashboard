@@ -3,19 +3,19 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import type { Prisma } from '../prismaClient';
 import { prisma } from '../prisma';
-import { ATS_LEDGER_SEAL_SEGMENTS_PER_PASS, atsLedgerHash, sealReadyAtsV2Segments, type AtsLedgerClaim } from '../atsAcquisitionLedger';
+import { ATS_LEDGER_SEAL_SEGMENTS_PER_PASS, atsLedgerHash, atsSegmentSizeForNewBoard, selectAtsPublicationSegments, sealReadyAtsV2Segments, type AtsLedgerClaim } from '../atsAcquisitionLedger';
 
-function fixture(t: TestContext, count = 52) {
+function fixture(t: TestContext, count = 52, size = 25) {
   const claim: AtsLedgerClaim = {
     batchId: 'batch', slug: 'example::CX', platform: 'oracle', workType: 'enrichment',
     claimToken: 'claim', claimFence: BigInt(1), workReceiptId: 'receipt', endpointSweepId: 'sweep',
-    listingGeneration: 1, listingOffset: 1, latestObservedTotal: count, acquisitionPhase: 'enrichment', segmentSize: 25,
+    listingGeneration: 1, listingOffset: 1, latestObservedTotal: count, acquisitionPhase: 'enrichment', segmentSize: size,
   };
   const batch = {
     id: claim.batchId, slug: claim.slug, platform: claim.platform, writerMode: 'v2', ledgerVersion: 2,
     activeLedgerGeneration: 1, acquisitionClaimToken: claim.claimToken, acquisitionClaimFence: claim.claimFence,
     acquisitionLeaseExpiresAt: new Date(Date.now() + 60_000), canonicalOccurrenceCount: count,
-    terminalItemCount: count, sealedItemCount: 0, segmentSize: 25, operatorResetAt: null as Date | null,
+    terminalItemCount: count, sealedItemCount: 0, segmentSize: size, operatorResetAt: null as Date | null,
     board: { checkDay: 3 },
   };
   const terminalAt = new Date('2026-10-07T14:00:00Z');
@@ -36,15 +36,15 @@ function fixture(t: TestContext, count = 52) {
       queries.push(query);
       // SQL semantics are additionally verified read-only against PostgreSQL.
       const candidates = [];
-      for (let segmentOrdinal = 0; segmentOrdinal < Math.ceil(count / 25); segmentOrdinal++) {
-        const first = segmentOrdinal * 25;
-        const range = items.filter(i => i.canonicalOrdinal >= first && i.canonicalOrdinal < Math.min(first + 25, count));
+      for (let segmentOrdinal = 0; segmentOrdinal < Math.ceil(count / size); segmentOrdinal++) {
+        const first = segmentOrdinal * size;
+        const range = items.filter(i => i.canonicalOrdinal >= first && i.canonicalOrdinal < Math.min(first + size, count));
         if (!manifests.some(s => s.segmentOrdinal === segmentOrdinal)
-          && range.length === Math.min(25, count - first) && range.every(i => i.enrichmentStatus === 'terminal')) {
+          && range.length === Math.min(size, count - first) && range.every(i => i.enrichmentStatus === 'terminal')) {
           candidates.push({ segmentOrdinal });
         }
       }
-      return candidates.slice(0, ATS_LEDGER_SEAL_SEGMENTS_PER_PASS);
+      return candidates.slice(0, ATS_LEDGER_SEAL_SEGMENTS_PER_PASS * (size === 1 ? 25 : 1));
     },
     atsIngestionBatch: {
       findUniqueOrThrow: async () => batch,
@@ -117,4 +117,43 @@ test('operator reset drain remains separate and empty boards need no item reads'
   assert.deepEqual(await sealReadyAtsV2Segments({ claim: f.claim }), { sealedSegments: 0, sealedItems: 0, complete: true });
   assert.equal(f.updates[0].status, 'reset_synchronized');
   assert.equal(f.counts().payloadReads + f.counts().boardWrites, 0);
+});
+
+test('new Oracle and UKG batches isolate posting readiness while other providers retain batching', () => {
+  assert.equal(atsSegmentSizeForNewBoard('oracle'), 1);
+  assert.equal(atsSegmentSizeForNewBoard('ukg'), 1);
+  assert.equal(atsSegmentSizeForNewBoard('greenhouse'), 25);
+  assert.equal(atsSegmentSizeForNewBoard('oracle', 25), 25, 'an explicit existing layout remains representable');
+});
+
+test('an unresolved posting cannot block its neighbors and later recovery cannot rewrite their seals', async t => {
+  const f = fixture(t, 61, 1);
+  f.items[0].enrichmentStatus = 'pending';
+  f.batch.terminalItemCount--;
+  assert.deepEqual(await sealReadyAtsV2Segments({ claim: f.claim }), { sealedSegments: 60, sealedItems: 60, complete: false });
+  assert.equal(f.manifests[0].firstOrdinal, 1);
+  const retained = structuredClone(f.manifests);
+  f.items[0].enrichmentStatus = 'terminal';
+  f.batch.terminalItemCount++;
+  assert.deepEqual(await sealReadyAtsV2Segments({ claim: f.claim }), { sealedSegments: 1, sealedItems: 1, complete: true });
+  assert.deepEqual(f.manifests.slice(0, 60), retained);
+  assert.equal(f.manifests.at(-1)?.firstOrdinal, 0);
+  assert.equal(new Set(f.manifests.map(s => s.firstOrdinal)).size, 61);
+});
+
+test('single-posting seals retain the existing payload bound', async t => {
+  const f = fixture(t, 601, 1);
+  assert.deepEqual(await sealReadyAtsV2Segments({ claim: f.claim }), { sealedSegments: 250, sealedItems: 250, complete: false });
+  assert.equal(f.counts().payloadReads, 1);
+});
+
+test('publication groups small handoffs without exceeding job credit, batch writes or FIFO order', () => {
+  const singles = Array.from({ length: 100 }, (_, id) => ({ id, batchId: 'one', segmentSize: 1, itemCount: 1 }));
+  assert.equal(selectAtsPublicationSegments(singles, 3, 1000).length, 75);
+  assert.equal(selectAtsPublicationSegments(singles, 3, 7).length, 7);
+  assert.equal(selectAtsPublicationSegments(singles, 3, 0).length, 0);
+  assert.equal(selectAtsPublicationSegments(singles.map((s, i) => ({ ...s, batchId: String(i) })), 3, 1000).length, 3);
+  const mixed = [{ id: -1, batchId: 'old', segmentSize: 25, itemCount: 25 }, ...singles];
+  assert.equal(selectAtsPublicationSegments(mixed, 3, 1000).length, 51);
+  assert.deepEqual(selectAtsPublicationSegments(mixed, 3, 24), [], 'a later small segment cannot jump past older work');
 });

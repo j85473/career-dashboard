@@ -159,11 +159,9 @@ const ATS_SCHEDULABLE_STATUSES: readonly string[] = [...ATS_ROTATION_STATUSES, .
  * the minute costs at most one cycle. Matches the `no_eligible_phase` backoff.
  */
 export const ATS_V2_CONTINUATION_IDLE_RETRY_MS = 60_000;
-// Each published segment also updates its batch row, which costs seconds under
-// contention. Ten per transaction cannot commit inside the ledger timeout, so
-// the publisher rolled back every pass and the sealed backlog never drained.
-// Smaller passes commit steadily; total throughput is higher because the work
-// is no longer discarded.
+// Batch-row writes cost seconds under contention. Publication groups up to 25
+// single-posting segments per old segment allowance and updates each batch once.
+// The existing setting still bounds batch writes and legacy-sized chunks.
 export const ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION = Math.max(1, Math.min(
   10,
   Number.parseInt(process.env.ATS_V2_PUBLICATION_MAX_SEGMENTS || '', 10) || 3,
