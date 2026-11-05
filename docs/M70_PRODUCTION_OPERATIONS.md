@@ -501,7 +501,7 @@ not 30 days after download. The archive worker requires synchronized lifecycle,
 no operator reset or active leases, complete page and observation hashes,
 terminal items, complete resolutions, and fully processed segments with matching
 manifests and outcome counts. Unfinished or unverifiable work stays online.
-Batches exceeding the bounded 64 MiB serialized budget stay online for separate
+Batches exceeding the bounded 256 MiB serialized budget stay online for separate
 streaming review; they are reported as held, never silently discarded.
 
 Every eligible batch is serialized with every column from its summary, pages,
@@ -536,7 +536,8 @@ rehearsal in `tests/integration/atsCrawlArchive.ts` tests a failed second copy,
 restricted application deletion, full field restoration, and score preservation.
 
 The timer `career-dashboard-crawl-archive.timer` runs bounded 45-second passes,
-with one batch transaction at a time and a 64 MiB batch ceiling. Its root wrapper
+with one batch transaction at a time, a 256 MiB batch ceiling, and a 3 GiB service
+memory limit. Its root wrapper
 shares `backup.lock` with backups and deployment, then drops to PostgreSQL's
 maintenance identity. Application identities cannot publish archive receipts or
 delete immutable evidence. Activation preserves the timer's previous state;

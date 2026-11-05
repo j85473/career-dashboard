@@ -617,6 +617,7 @@ model AtsIngestionItem {
   resolutions                 AtsListingObservationResolution[] @relation("ResolvedItem")
 
   @@unique([batchId, ledgerGeneration, canonicalOrdinal])
+  @@index([representativeObservationId])
   @@index([batchId, ledgerGeneration, enrichmentStatus, nextDetailAt, canonicalOrdinal])
   @@index([batchId, ledgerGeneration, providerSourceId])
   @@index([itemLeaseExpiresAt])

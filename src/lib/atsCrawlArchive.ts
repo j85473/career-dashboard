@@ -9,7 +9,7 @@ export const CRAWL_ARCHIVE_TABLES = ['AtsIngestionPage', 'AtsListingObservation'
   'AtsListingObservationResolution', 'AtsIngestionSegment', 'AtsAcquisitionWorkReceipt', 'AtsEndpointSweepReceipt'] as const;
 export const CRAWL_ARCHIVE_DELETE_ORDER = ['AtsListingObservationResolution', 'AtsIngestionItem',
   'AtsListingObservation', 'AtsIngestionPage'] as const;
-export const CRAWL_ARCHIVE_MAX_BYTES = 64 * 1024 ** 2;
+export const CRAWL_ARCHIVE_MAX_BYTES = 256 * 1024 ** 2;
 export const CRAWL_ARCHIVE_RETENTION_DAYS = 30;
 export type ArchiveRow = Record<string, unknown>;
 export type CrawlArchive = { version: 1; batch: ArchiveRow; tables: Record<typeof CRAWL_ARCHIVE_TABLES[number], ArchiveRow[]> };
@@ -114,7 +114,7 @@ export function verifyCrawlArchive(archive: CrawlArchive, now = Date.now()): Rec
 export function encodeCrawlArchive(archive: CrawlArchive): { bytes: Buffer; hash: string } {
   verifyCrawlArchive(archive);
   const body = Buffer.from(JSON.stringify(archive));
-  if (body.length > CRAWL_ARCHIVE_MAX_BYTES) throw new Error('Crawl archive exceeds the bounded 64 MiB batch budget');
+  if (body.length > CRAWL_ARCHIVE_MAX_BYTES) throw new Error('Crawl archive exceeds the bounded 256 MiB batch budget');
   const bytes = gzipSync(body);
   return { bytes, hash: createHash('sha256').update(bytes).digest('hex') };
 }

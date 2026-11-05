@@ -40,21 +40,25 @@ export async function loadCrawlArchive(client: Client, batchId: string): Promise
   if (batch.rowCount !== 1) throw new Error('Batch does not exist');
   const archive: CrawlArchive = { version: 1, batch: batch.rows[0].row, tables: {} as CrawlArchive['tables'] };
   let bytes = Buffer.byteLength(JSON.stringify(archive.batch));
+  await client.query("SET LOCAL cursor_tuple_fraction=1.0");
   for (const table of CRAWL_ARCHIVE_TABLES) {
     const expression = await jsonExpression(client, table);
     const rows: ArchiveRow[] = [];
-    let cursor = '';
-    while (true) {
-      const result = await client.query<{ row: ArchiveRow }>(`SELECT ${expression} AS row FROM ${quote(table)} t
-        WHERE "batchId"=$1 AND id>$2 ORDER BY id LIMIT 100`, [batchId, cursor]);
-      for (const { row } of result.rows) {
-        bytes += Buffer.byteLength(JSON.stringify(row));
-        if (bytes > CRAWL_ARCHIVE_MAX_BYTES - 1024 * 1024) throw new Error('Batch exceeds the bounded archive budget; retained for streaming review');
-        rows.push(row);
-        cursor = String(row.id);
+    // A server cursor scans the batch once. Repeated UUID keyset LIMITs can
+    // choose the global primary-key index and repeatedly scan unrelated crawls.
+    await client.query(`DECLARE crawl_archive_rows NO SCROLL CURSOR FOR
+      SELECT ${expression} AS row FROM ${quote(table)} t WHERE "batchId"=$1 ORDER BY id`, [batchId]);
+    try {
+      while (true) {
+        const result = await client.query<{ row: ArchiveRow }>('FETCH FORWARD 100 FROM crawl_archive_rows');
+        for (const { row } of result.rows) {
+          bytes += Buffer.byteLength(JSON.stringify(row));
+          if (bytes > CRAWL_ARCHIVE_MAX_BYTES - 1024 * 1024) throw new Error('Batch exceeds the bounded archive budget; retained for streaming review');
+          rows.push(row);
+        }
+        if (result.rows.length < 100) break;
       }
-      if (result.rows.length < 100) break;
-    }
+    } finally { await client.query('CLOSE crawl_archive_rows'); }
     archive.tables[table] = rows;
   }
   verifyCrawlArchive(archive);
@@ -141,21 +145,28 @@ export async function runCrawlArchive(argv: string[]): Promise<void> {
       const configuration = JSON.parse(await readFile(CONFIG, 'utf8'));
       if (configuration.retentionDays !== 30 || configuration.version !== 1) throw new Error('Archival policy is not enabled');
       await rootsReady();
+      const referenceIndex = await client.query(`SELECT i.indisvalid FROM pg_index i
+        WHERE i.indexrelid=to_regclass('"AtsIngestionItem_representativeObservationId_idx"')`);
+      if (referenceIndex.rows[0]?.indisvalid !== true) throw new Error('The archive reference index must be ready before retiring rows');
     }
     if (!(await client.query('SELECT pg_try_advisory_lock(625301105) AS owned')).rows[0].owned) throw new Error('An archive worker is already running');
-    let state: { cursor: string; archivedBatches: number; archivedRows: number; archiveBytes: number; held: Array<{ batchId: string; reason: string }> } =
-      { cursor: '', archivedBatches: 0, archivedRows: 0, archiveBytes: 0, held: [] };
+    let state: { cursor: string; priorityCount?: number | null; archivedBatches: number; archivedRows: number; archiveBytes: number; held: Array<{ batchId: string; reason: string }> } =
+      { cursor: '', priorityCount: null, archivedBatches: 0, archivedRows: 0, archiveBytes: 0, held: [] };
     if (mode === '--apply' && !requestedId) {
       try { state = JSON.parse(await readFile(STATE, 'utf8')); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
-    const candidates = requestedId ? [{ id: requestedId }] : (await client.query<{ id: string }>(`SELECT id FROM "AtsIngestionBatch"
+    // Retire the largest eligible completed crawls first. A stable two-part
+    // cursor advances past held batches too, so one bad archive cannot starve
+    // all smaller crawls. A completed pass returns to newly eligible work.
+    const candidates = requestedId ? [{ id: requestedId, rawObservationCount: 0 }] : (await client.query<{ id: string; rawObservationCount: number }>(`SELECT id,"rawObservationCount" FROM "AtsIngestionBatch"
       WHERE "writerMode"='v2' AND status='processed' AND "archiveVerifiedAt" IS NULL AND "operatorResetAt" IS NULL
         AND "processedAt" < (now() AT TIME ZONE 'UTC')-interval '30 days'
-        AND "rawObservationCount">0 AND id>$1 ORDER BY id LIMIT $2`, [state.cursor, mode === '--apply' ? 1000 : 10])).rows;
+        AND "rawObservationCount">0 AND ($1::int IS NULL OR "rawObservationCount"<$1 OR ("rawObservationCount"=$1 AND id>$2))
+      ORDER BY "rawObservationCount" DESC,id LIMIT $3`, [state.priorityCount ?? null, state.cursor, mode === '--apply' ? 1000 : 10])).rows;
     const start = Date.now();
     let completed = 0;
-    for (const { id } of candidates) {
+    for (const { id, rawObservationCount } of candidates) {
       if (Date.now() - start > 45_000) break;
       // A missing mount or exhausted shared disk stops the pass. It is not a
       // defect in an individual batch and must not advance past that batch.
@@ -173,8 +184,9 @@ export async function runCrawlArchive(argv: string[]): Promise<void> {
         if (requestedId) throw error;
       }
       state.cursor = id;
+      state.priorityCount = rawObservationCount;
     }
-    if (candidates.length === 0) state.cursor = '';
+    if (candidates.length === 0) { state.cursor = ''; state.priorityCount = null; }
     if (mode === '--apply' && !requestedId) {
       await writeFile(`${STATE}.tmp`, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }), { mode: 0o640 });
       await rename(`${STATE}.tmp`, STATE);
