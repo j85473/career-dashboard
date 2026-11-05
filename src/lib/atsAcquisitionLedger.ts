@@ -1,3 +1,6 @@
+import { atsLedgerHash, canonicalJson } from './atsEvidenceHash';
+export { atsLedgerHash } from './atsEvidenceHash';
+import { resolveAtsItemRaw } from './atsRawEvidence';
 import { atsRetryColumns, readAtsRetryReason, type AtsRetryReason } from './atsRetryReason';
 import { storageAllows } from './storagePressure';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
@@ -154,21 +157,6 @@ function isPrismaError(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === 'object' && 'code' in error && String(error.code) === code);
 }
 
-function canonicalJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalJson);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as JsonObject)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, canonicalJson(entry)]),
-    );
-  }
-  return value;
-}
-
-export function atsLedgerHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(canonicalJson(value))).digest('hex');
-}
 
 function jsonObject(value: Prisma.JsonValue | null | undefined): JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -1466,7 +1454,8 @@ export async function resolveNextAtsV2ObservationChunk(input: {
           representativeObservationId: observation.id,
           providerSourceId: observation.providerSourceId,
           rawHash: observation.rawHash,
-          rawJson: inputJson(jsonObject(observation.rawJson)),
+          rawJson: Prisma.DbNull,
+          rawReference: inputJson({ version: 1, type: 'observation', observationId: observation.id, rawHash: observation.rawHash }),
           ...(invalidOverlay ? {
             enrichmentOverlay: inputJson(invalidOverlay),
             enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
@@ -1580,6 +1569,7 @@ export async function terminalizeAtsV2NoNetworkItems(input: {
     assertClaimMatchesBatch(batch, input.claim, now);
     if (batch.acquisitionPhase !== 'enrichment' && !(input.allowListingPrefix && batch.acquisitionPhase === 'listing')) return { inspected: 0, terminalized: 0 };
     const items = await transaction.atsIngestionItem.findMany({
+      include: { representativeObservation: true },
       where: {
         batchId: batch.id,
         ledgerGeneration: batch.activeLedgerGeneration,
@@ -1591,7 +1581,7 @@ export async function terminalizeAtsV2NoNetworkItems(input: {
       orderBy: { canonicalOrdinal: 'asc' },
       take,
     });
-    const rawJobs = items.map((item) => jsonObject(item.rawJson));
+    const rawJobs = items.map(resolveAtsItemRaw);
     const marked = markAtsListingsWithoutDetail({
       platform: batch.platform,
       slug: batch.slug,
@@ -1690,11 +1680,11 @@ export async function enrichNextAtsV2DetailItem(input: {
       },
     });
     if (claimed.count !== 1) return null;
-    return transaction.atsIngestionItem.findUniqueOrThrow({ where: { id: candidate.id } });
+    return transaction.atsIngestionItem.findUniqueOrThrow({ where: { id: candidate.id }, include: { representativeObservation: true } });
   });
   if (!item) return 'none';
 
-  const rawJob = jsonObject(item.rawJson);
+  const rawJob = resolveAtsItemRaw(item);
   try {
     const enriched = await enrichAtsListingJob({
       platform: input.claim.platform,
@@ -2183,6 +2173,7 @@ export async function claimNextAtsV2Segment(
     throw new AtsLedgerAuthorityError(`ATS segment ${segment.id} belongs to a non-v2 batch.`);
   }
   const items = await prisma.atsIngestionItem.findMany({
+    include: { representativeObservation: true },
     where: {
       batchId: segment.batchId,
       ledgerGeneration: segment.ledgerGeneration,
@@ -2207,7 +2198,7 @@ export async function claimNextAtsV2Segment(
     throw new AtsLedgerAuthorityError(`ATS segment ${segment.id} manifest hash changed before processing.`);
   }
   const remainingItems = items.slice(segment.processingOffset);
-  const jobs = remainingItems.map((item) => mergeAtsLedgerItem(item.rawJson, item.enrichmentOverlay));
+  const jobs = remainingItems.map((item) => mergeAtsLedgerItem(resolveAtsItemRaw(item) as Prisma.JsonValue, item.enrichmentOverlay));
   const canonicalOrdinals = remainingItems.map((item) => item.canonicalOrdinal);
   const pages = await prisma.atsIngestionPage.findMany({
     where: { batchId: segment.batchId, generation: segment.ledgerGeneration },

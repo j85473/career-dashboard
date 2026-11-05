@@ -68,6 +68,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
+       AND batch."archiveVerifiedAt" IS NULL
        AND batch."rawObservationCount" <> (
          SELECT COUNT(*) FROM "AtsListingObservation" observation
           WHERE observation."batchId" = batch.id
@@ -80,6 +81,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
+       AND batch."archiveVerifiedAt" IS NULL
        AND batch."canonicalOccurrenceCount" <> (
          SELECT COUNT(*) FROM "AtsIngestionItem" item
           WHERE item."batchId" = batch.id
@@ -93,6 +95,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
+       AND batch."archiveVerifiedAt" IS NULL
        AND batch."terminalItemCount" <> (
          SELECT COUNT(*) FROM "AtsIngestionItem" item
           WHERE item."batchId" = batch.id
@@ -107,6 +110,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
+       AND batch."archiveVerifiedAt" IS NULL
        AND batch."sealedItemCount" <> (
          SELECT COALESCE(SUM(segment."itemCount"), 0)
            FROM "AtsIngestionSegment" segment
@@ -121,6 +125,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
+       AND batch."archiveVerifiedAt" IS NULL
        AND batch."publishedItemCount" <> (
          SELECT COALESCE(SUM(segment."itemCount"), 0)
            FROM "AtsIngestionSegment" segment
@@ -153,6 +158,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
+       AND batch."archiveVerifiedAt" IS NULL
        AND batch."sealedItemCount" > 0
        AND (batch."manifestHash" IS NULL OR btrim(batch."manifestHash") = '')
   ) OR EXISTS (
@@ -192,6 +198,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
+       AND batch."archiveVerifiedAt" IS NULL
        AND batch.status IN ('queued', 'processing', 'processed')
        AND EXISTS (
          SELECT 1 FROM "AtsListingObservation" observation

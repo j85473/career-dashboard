@@ -21,7 +21,7 @@ const VERSION = 'ats-board-geography-report-v1';
  * nothing, and invisible to the tool built to find boards producing nothing.
  *
  * The raw listing payloads are the way around that. Every posting the pipeline
- * ever fetched is retained in `AtsIngestionItem.rawJson`, whether or not it
+ * still online is retained inline or through its immutable observation, whether or not it
  * survived the gate, so a board's hiring geography can be read from what it
  * actually published rather than from what got through.
  *
@@ -55,19 +55,19 @@ const LOCATION_SQL = `
     -- {"id":4551234,"name":"Paris"} yields the whole literal -- and that text
     -- carries the id, whose digits can contain the 554/551 ZIP prefixes and
     -- score a Minnesota match for a board in Paris.
-    nullif(case when jsonb_typeof(i."rawJson"->'location') = 'string'
-      then i."rawJson"->>'location' end, ''),
-    nullif(i."rawJson"->'location'->>'name', ''),
+    nullif(case when jsonb_typeof(COALESCE(i."rawJson", o."rawJson")->'location') = 'string'
+      then COALESCE(i."rawJson", o."rawJson")->>'location' end, ''),
+    nullif(COALESCE(i."rawJson", o."rawJson")->'location'->>'name', ''),
     nullif(trim(concat_ws(' ',
-      i."rawJson"->'location'->>'city',
-      i."rawJson"->'location'->>'region')), ''),
-    nullif(i."rawJson"->'categories'->>'location', ''),
-    nullif(i."rawJson"->'workLocation'->>'label', ''),
-    nullif(i."rawJson"->>'locationsText', ''),
+      COALESCE(i."rawJson", o."rawJson")->'location'->>'city',
+      COALESCE(i."rawJson", o."rawJson")->'location'->>'region')), ''),
+    nullif(COALESCE(i."rawJson", o."rawJson")->'categories'->>'location', ''),
+    nullif(COALESCE(i."rawJson", o."rawJson")->'workLocation'->>'label', ''),
+    nullif(COALESCE(i."rawJson", o."rawJson")->>'locationsText', ''),
     nullif(trim(concat_ws(' ',
-      i."rawJson"->>'city',
-      i."rawJson"->>'state',
-      i."rawJson"->>'country')), ''),
+      COALESCE(i."rawJson", o."rawJson")->>'city',
+      COALESCE(i."rawJson", o."rawJson")->>'state',
+      COALESCE(i."rawJson", o."rawJson")->>'country')), ''),
     ''
   ))`;
 
@@ -82,11 +82,11 @@ const LOCATION_SQL = `
  */
 const REMOTE_SQL = `
   lower(concat_ws(' ',
-    i."rawJson"->>'title',
-    i."rawJson"->>'text',
-    i."rawJson"->>'name',
-    i."rawJson"->>'workplaceType',
-    i."rawJson"->>'workplace_type'
+    COALESCE(i."rawJson", o."rawJson")->>'title',
+    COALESCE(i."rawJson", o."rawJson")->>'text',
+    COALESCE(i."rawJson", o."rawJson")->>'name',
+    COALESCE(i."rawJson", o."rawJson")->>'workplaceType',
+    COALESCE(i."rawJson", o."rawJson")->>'workplace_type'
   ))`;
 
 const MATCH_SQL = `(
@@ -110,8 +110,10 @@ async function main(argv: string[]): Promise<void> {
         count(*) filter (where ${LOCATION_SQL} = '') as unreadable,
         (array_agg(distinct ${LOCATION_SQL}))[1:5] as sample_locations
       from "AtsIngestionItem" i
+      left join "AtsListingObservation" o on o.id=i."representativeObservationId" AND i."rawJson" IS NULL
       join "AtsIngestionBatch" b on b.id = i."batchId"
-      where i."rawJson" is not null
+      where COALESCE(i."rawJson", o."rawJson") is not null
+        AND NOT EXISTS (SELECT 1 FROM "AtsIngestionBatch" archived WHERE archived.slug=b.slug AND archived.platform=b.platform AND archived."archiveVerifiedAt" IS NOT NULL)
       group by 1, 2
     )
     select p.*, c."status"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain bounded live crawler storage
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=15
+AccuracySec=1
+Unit=career-dashboard-crawl-archive.service
+
+[Install]
+WantedBy=timers.target

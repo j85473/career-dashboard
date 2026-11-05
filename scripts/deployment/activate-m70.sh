@@ -43,6 +43,10 @@ if [[ ! -f $STAGE/.m70-build-complete ]]; then
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build PUPPETEER_SKIP_DOWNLOAD=true PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npx prisma generate
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npm run build
+ # Compile the maintenance entrypoint as the application owner. PostgreSQL's
+ # restricted identity can read JS but cannot execute npm's private binaries.
+ runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build ./node_modules/esbuild/bin/esbuild scripts/deployment/archive-crawls.ts \
+   --bundle --packages=external --platform=node --format=esm --outfile=scripts/deployment/crawl-archive.mjs
  touch .m70-build-complete
 fi
 python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity
@@ -78,7 +82,8 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0; CANONICAL_API=0; CANONICAL_API_NEW=0; PUBLIC_BOARDS=0; PUBLIC_BOARDS_NEW=0; PUBLIC_HTTP=0; PUBLIC_HTTP_NEW=0; WEB_DISCOVERY=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0; CANONICAL_API=0; CANONICAL_API_NEW=0; PUBLIC_BOARDS=0; PUBLIC_BOARDS_NEW=0; PUBLIC_HTTP=0; PUBLIC_HTTP_NEW=0; WEB_DISCOVERY=0; CRAWL_ARCHIVE=0
+systemctl is-active --quiet career-dashboard-crawl-archive.timer && CRAWL_ARCHIVE=1 || true
 [[ -f /etc/systemd/system/career-dashboard-public-boards.timer ]] || PUBLIC_BOARDS_NEW=1
 systemctl is-active --quiet career-dashboard-public-boards.timer && PUBLIC_BOARDS=1 || true
 [[ -f /etc/systemd/system/career-dashboard-public-http.timer ]] || PUBLIC_HTTP_NEW=1
@@ -122,6 +127,7 @@ fi
 [[ $MODE != maintenance ]] || PUBLIC_BOARDS=0
 [[ $MODE != maintenance ]] || PUBLIC_HTTP=0
 [[ $MODE != maintenance ]] || WEB_DISCOVERY=0
+[[ $MODE != maintenance ]] || CRAWL_ARCHIVE=0
 resume_discovery_audit() {
  (( DISCOVERY_AUDIT == 0 )) && return
  if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
@@ -147,11 +153,18 @@ restart_background() {
  (( STATS_WARM == 0 )) || systemctl start career-dashboard-stats-warm.timer
  (( FIRST_COLLECTIONS == 0 )) || systemctl start career-dashboard-first-collections.timer
  (( ROTATION_BALANCE == 0 )) || systemctl start career-dashboard-rotation-balance.timer
+ (( CRAWL_ARCHIVE == 0 )) || systemctl start career-dashboard-crawl-archive.timer
  resume_discovery_audit
 }
 SWAPPED=0
 recover() {
  echo 'Release failed; preserving the database and restoring prior application routing.' >&2
+ systemctl stop career-dashboard-crawl-archive.timer career-dashboard-crawl-archive.service 2>/dev/null || true
+ if [[ ! -f $OLD/scripts/deployment/m70/career-dashboard-crawl-archive.timer ]]; then
+  CRAWL_ARCHIVE=0
+  systemctl disable career-dashboard-crawl-archive.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/career-dashboard-crawl-archive.timer /etc/systemd/system/career-dashboard-crawl-archive.service
+ fi
  systemctl stop career-dashboard-web-discovery.timer career-dashboard-web-discovery.service 2>/dev/null || true
  if [[ ! -f $OLD/scripts/deployment/m70/career-dashboard-web-discovery.timer ]]; then
   WEB_DISCOVERY=0
@@ -197,6 +210,8 @@ recover() {
 }
 trap recover ERR
 systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer
+# Owning backup.lock already proves no archive transaction remains in flight.
+systemctl stop career-dashboard-crawl-archive.timer career-dashboard-crawl-archive.service 2>/dev/null || true
 # Tolerated separately: units are installed further down, so on the first
 # release that introduces one, stopping it here fails with 'not loaded' and
 # would trip the ERR trap into a rollback of an otherwise good release.

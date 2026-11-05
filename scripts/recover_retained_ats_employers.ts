@@ -1,3 +1,4 @@
+import { resolveAtsItemRaw } from '../src/lib/atsRawEvidence';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { prisma } from '../src/lib/prisma';
@@ -37,8 +38,8 @@ async function main() {
         if (mode === '--collect-postings') {
           const item = await prisma.atsIngestionItem.findUniqueOrThrow({ where: { batchId_ledgerGeneration_canonicalOrdinal: {
             batchId, ledgerGeneration, canonicalOrdinal: firstOrdinal + segment.processingOffset,
-          } }, select: { rawJson: true, enrichmentOverlay: true } });
-          job = { ...item.rawJson as Record<string, unknown>, ...item.enrichmentOverlay as Record<string, unknown> };
+          } }, include: { representativeObservation: true } });
+          job = { ...resolveAtsItemRaw(item), ...item.enrichmentOverlay as Record<string, unknown> };
         }
         if (!boards.has(key)) boards.set(key, { ...batch, ...(job ? { job } : {}), company: '', checkedAt: null, error: null, sources: [], segments: [] });
         boards.get(key)!.segments.push(segment);

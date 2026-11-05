@@ -1,3 +1,4 @@
+import { resolveAtsItemRaw } from './atsRawEvidence';
 import { readPublishedAtsBoardEmployer, readPublishedAtsPostingEvidence, type AtsPostingEmployerEvidence } from './atsEmployerRecovery';
 import { VERIFIED_ATS_EMPLOYER_ORIGIN, VERIFIED_ATS_EMPLOYER_RULE, VERIFIED_ATS_POSTING_EMPLOYER_RULE, atsPostingEmployerKey } from './atsEmployerRegistry';
 import { canonicalJsonSha256 } from './scoringCanonicalJson';
@@ -90,9 +91,10 @@ export async function applyRetainedEmployerPlan(client: PrismaClient, plan: Reta
           const item = await tx.atsIngestionItem.findUnique({ where: { batchId_ledgerGeneration_canonicalOrdinal: {
             batchId: current.batchId, ledgerGeneration: current.ledgerGeneration,
             canonicalOrdinal: current.firstOrdinal + current.processingOffset,
-          } }, select: { rawJson: true, enrichmentOverlay: true } });
-          const job = { ...item?.rawJson as Record<string, unknown>, ...item?.enrichmentOverlay as Record<string, unknown> };
-          if (!item || atsPostingEmployerKey(board.platform, board.slug, job) !== matchKey) continue;
+          } }, include: { representativeObservation: true } });
+          if (!item) continue;
+          const job = { ...resolveAtsItemRaw(item), ...item.enrichmentOverlay as Record<string, unknown> };
+          if (atsPostingEmployerKey(board.platform, board.slug, job) !== matchKey) continue;
         }
         const changed = await tx.atsIngestionSegment.updateMany({
           where: { ...segment, status: 'published', leaseToken: null,

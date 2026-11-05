@@ -92,7 +92,7 @@ for (const alreadyBuilt of [false, true]) {
     assert.equal(result.probe.cwd, result.expectedStage);
     assert.equal(result.probe.database, 'postgresql://production.invalid/career');
     assert.match(result.stdout, new RegExp(`audit-resume=${alreadyBuilt ? 0 : 1}`));
-    assert.equal(result.buildCalls.length, alreadyBuilt ? 0 : 3);
+    assert.equal(result.buildCalls.length, alreadyBuilt ? 0 : 4);
     for (const command of result.buildCalls) {
       assert.match(command, /DATABASE_URL=postgresql:\/\/build:build@127\.0\.0\.1:1\/build/);
     }
@@ -104,7 +104,7 @@ test('activation fixture treats spaces, quotes, and shell substitutions in paths
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.probe.cwd, result.expectedStage);
   assert.equal(result.probe.database, 'postgresql://production.invalid/career');
-  assert.equal(result.buildCalls.length, 3);
+  assert.equal(result.buildCalls.length, 4);
 });
 
 test('an uncertain audit precheck still aborts a repeat activation before touching services', () => {

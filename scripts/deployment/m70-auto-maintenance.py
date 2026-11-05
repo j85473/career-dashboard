@@ -22,6 +22,7 @@ APP = Path('/opt/career-dashboard')
 BACKUPS = Path('/mnt/backup/m70')
 HOLD = STATE / 'hold-background'
 BACKGROUND = (
+    'career-dashboard-crawl-archive.timer',
     'career-dashboard-scheduler.timer', 'career-dashboard-watchdog.timer',
     'career-dashboard-board-pruning.timer', 'career-dashboard-discovery.timer',
     'career-dashboard-canonical-api.timer', 'career-dashboard-canonical-resolver.timer', 'career-dashboard-gusto.timer', 'career-dashboard-public-boards.timer',

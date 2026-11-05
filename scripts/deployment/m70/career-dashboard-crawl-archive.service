@@ -1,0 +1,21 @@
+[Unit]
+Description=Archive verified completed crawler evidence after thirty days
+After=postgresql.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+ConditionPathExists=/etc/career-dashboard/crawl-archive-enabled
+
+[Service]
+Type=oneshot
+User=root
+Group=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=NODE_ENV=production
+ExecStart=/bin/bash /opt/career-dashboard/scripts/deployment/run-crawl-archive.sh
+TimeoutStartSec=180
+TimeoutStopSec=150
+UMask=0027
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+

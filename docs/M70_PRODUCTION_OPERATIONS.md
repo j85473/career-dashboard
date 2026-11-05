@@ -474,9 +474,85 @@ storage allocation. Test databases are never deleted automatically. The Prisma
 the recorded validation evidence remains in the repository.
 
 These guards bound release growth and reject allocations that consume backup
-headroom. Database growth can still exhaust finite physical capacity: an actual
-reserve failure requires storage expansion or a separately approved retention
-change, rather than repeated retries or deletion of protected recovery points.
+headroom. The database has a separate physical-space safeguard and the approved
+completed-crawl retention policy below. Capacity failures must remain visible;
+never resolve them by deleting protected recovery points or job data.
+
+### Database disk safeguard and completed-crawl archives
+
+The independent storage monitor samples the NVMe every 15 seconds. The Dashboard
+warns below 40 GiB free; new collection pauses below 30 GiB and resumes only at
+40 GiB. Below 15 GiB, the pipeline and other guarded background writers also
+pause; that critical pause clears at 20 GiB. A missing mount or stale monitor
+fails closed for background work. Reading cards, existing scores, applications,
+and attachments does not depend on passing the storage gate. In-flight work
+can finish before its next admission check, so these are reserves, not quotas.
+Hourly samples retain 30 days of history; a growth forecast appears only after
+at least a day of observations. The status endpoint is `/api/storage` and the
+independent timer is `career-dashboard-storage-monitor.timer`.
+
+New v2 ingestion items reference their immutable posting observation instead of
+storing its JSON a second time. Readers verify the reference and content hash.
+Older inline items remain readable; no existing scores or raw evidence are
+rewritten by this change.
+
+Completed v2 crawls become eligible for cold storage 30 days after processing,
+not 30 days after download. The archive worker requires synchronized lifecycle,
+no operator reset or active leases, complete page and observation hashes,
+terminal items, complete resolutions, and fully processed segments with matching
+manifests and outcome counts. Unfinished or unverifiable work stays online.
+Batches exceeding the bounded 64 MiB serialized budget stay online for separate
+streaming review; they are reported as held, never silently discarded.
+
+Every eligible batch is serialized with every column from its summary, pages,
+observations, items, resolutions, segments, work receipts, and endpoint receipt.
+Two compressed copies are fsynced, read back, and verified before the database
+transaction publishes its immutable archive receipt and removes only the raw
+pages, observations, items, and resolutions. The destinations are private
+directories on the mounted NAS and backup SSD:
+`/media/nas/career-dashboard-crawl-archive` and
+`/mnt/backup/career-dashboard-crawl-archive`. Both mounts must be present and
+different, and each disk must retain 20 GiB. The NVMe also needs 20 GiB of write
+headroom. There is no automatic archive expiry. Archive copies become part of
+database recovery: retain either verified copy alongside a database backup.
+
+The job catalog, all scores, application history, attachments, job-source
+observations, batch summaries, segments, and outcome receipts remain online.
+No missing online raw row may be treated as evidence that a board was never
+relevant: the geography exclusion tools skip boards with archived history.
+The live-ledger verifier excludes archived batches from raw-row reconciliation
+and still checks their archive receipts. Use the archive reader for their full
+evidence:
+
+```sh
+sudo -u postgres -g career-dashboard /usr/local/bin/node \
+  /opt/career-dashboard/scripts/deployment/crawl-archive.mjs --read BATCH_UUID
+```
+
+The reader checks the recorded checksum and all evidence, falling back to the
+second copy if needed. Restore into an isolated schema-compatible database
+first; do not replace current job data with historical evidence. The integration
+rehearsal in `tests/integration/atsCrawlArchive.ts` tests a failed second copy,
+restricted application deletion, full field restoration, and score preservation.
+
+The timer `career-dashboard-crawl-archive.timer` runs bounded 45-second passes,
+with one batch transaction at a time and a 64 MiB batch ceiling. Its root wrapper
+shares `backup.lock` with backups and deployment, then drops to PostgreSQL's
+maintenance identity. Application identities cannot publish archive receipts or
+delete immutable evidence. Activation preserves the timer's previous state;
+maintenance mode leaves it stopped. First enablement requires the explicit
+policy file `/etc/career-dashboard/crawl-archive-enabled` containing
+`{"version":1,"retentionDays":30}` and prepared private archive/state directories.
+Progress and the latest held reasons are saved under
+`/var/lib/career-dashboard/crawl-archive/state.json`; database archive receipts
+are authoritative if a process exits before saving its progress counters.
+
+Deleting archived rows makes PostgreSQL space reusable. It does not normally
+return that space to the filesystem. Initial recovery must measure physical
+free space separately and compact only the affected crawler tables with enough
+working space; never run an unbudgeted `VACUUM FULL` against the nearly full
+NVMe. The collection pause clears only when physical free space reaches its
+40 GiB recovery threshold.
 
 ## Database tuning
 

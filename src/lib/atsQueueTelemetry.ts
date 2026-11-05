@@ -89,13 +89,14 @@ async function queryAtsQueueTelemetry(): Promise<AtsQueueSnapshot> {
         SELECT 'Persistence', b.platform,
           COALESCE(NULLIF(to_jsonb(s)->>'holdReason',''),
             CASE WHEN b.platform IN ('oracle','ukg','zohorecruit') AND
-              COALESCE(i."enrichmentOverlay"->'__careerDashboardAtsEnrichment'->>'company', i."rawJson"->>'company','')=''
+              COALESCE(i."enrichmentOverlay"->'__careerDashboardAtsEnrichment'->>'company', COALESCE(i."rawJson", o."rawJson")->>'company','')=''
               THEN 'Downloaded item has no verified employer (older retry reason not recorded)'
               ELSE 'Processing retry (older retry reason not recorded)' END),
           'segments', GREATEST(s."itemCount"-s."processingOffset",0)::bigint, s."nextProcessAt", b.slug
         FROM "AtsIngestionSegment" s JOIN "AtsIngestionBatch" b ON b.id=s."batchId"
         LEFT JOIN "AtsIngestionItem" i ON i."batchId"=s."batchId" AND i."ledgerGeneration"=s."ledgerGeneration"
           AND i."canonicalOrdinal"=s."firstOrdinal"+s."processingOffset"
+        LEFT JOIN "AtsListingObservation" o ON o.id=i."representativeObservationId" AND i."rawJson" IS NULL
         WHERE s.status='published' AND s."nextProcessAt">${nowUtc}
         UNION ALL
         SELECT 'Persistence', platform, COALESCE("lastError",'Scheduled legacy processing retry'), 'batches',

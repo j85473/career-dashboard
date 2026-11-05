@@ -1,7 +1,7 @@
 import { mockPrismaTransaction } from '../../../tests/helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import type { Prisma } from '../prismaClient';
+import { Prisma } from '../prismaClient';
 import { prisma } from '../prisma';
 import {
   atsLedgerHash, emptyAtsListingResponseOverlay, resolveNextAtsV2ObservationChunk,
@@ -75,7 +75,10 @@ test('an empty response remains auditable while valid work advances, without dup
   assert.equal(f.items[0].enrichmentStatus, 'terminal');
   assert.equal(f.items[0].enrichmentReason, ATS_INVALID_PROVIDER_RESPONSE_REASON);
   assert.ok(f.items[0].terminalAt instanceof Date);
-  assert.deepEqual(f.items[0].rawJson, {});
+  assert.equal(f.items[0].rawJson, Prisma.DbNull);
+  assert.deepEqual(f.items[0].rawReference, {
+    version: 1, type: 'observation', observationId: f.observations[0].id, rawHash: atsLedgerHash({}),
+  }, 'the empty response remains recoverable from its unchanged observation');
   assert.equal(f.items[1].enrichmentStatus, undefined, 'valid work remains available for enrichment');
   assert.equal(f.resolutions[0].resolutionType, ATS_INVALID_PROVIDER_RESPONSE_REASON);
   assert.equal(f.resolutions[1].resolutionType, 'canonical_item');
