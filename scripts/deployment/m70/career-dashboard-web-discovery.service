@@ -7,6 +7,7 @@ ConditionPathExists=/etc/career-dashboard/web-discovery-enabled
 ConditionPathExists=/etc/career-dashboard/web-discovery-seeds.txt
 
 [Service]
+ExecCondition=/usr/bin/python3 /opt/career-dashboard/scripts/deployment/m70-storage-monitor.py --allow collection
 Type=oneshot
 User=career-dashboard
 WorkingDirectory=/opt/career-dashboard

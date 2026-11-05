@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { storageAllows } from './storagePressure';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -405,6 +406,7 @@ export async function pipelineStopRequested(
   client: PipelineStateClient = controlPrisma,
   now: number = Date.now(),
 ): Promise<boolean> {
+  if (!storageAllows('background')) return true;
   if (stopCheckCache && now - stopCheckCache.at < 3_000) return !stopCheckCache.running;
   try {
     const row = await client.pipelineState.findUnique({

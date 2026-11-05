@@ -1,11 +1,13 @@
 import { Prisma } from './prismaClient';
 import { atsRunnableLegacyBatchSql, atsSegmentPersistenceCapacitySql } from './atsAdmissionCapacity';
 import { ATS_PUBLIC_TURN_JOBS } from './atsPersistenceAllocation';
+import { storageAllows } from './storagePressure';
 
 /** Public crawlers persist bounded jobs directly; they do not append API
  * listing observations. Keep the operator gate and runnable writer pressure,
  * without charging them for another provider's unfinished catalogue. */
 export async function publicCrawlCapacity(client: Pick<Prisma.TransactionClient, '$queryRaw'>, now = new Date()) {
+    if (!storageAllows('collection')) return { healthy: false, persistence: 0, limit: 0 };
     const [snapshot] = await client.$queryRaw<Array<{ persistence: bigint; gate: string }>>(Prisma.sql`
         SELECT (COALESCE((${atsSegmentPersistenceCapacitySql(now)}),0)
           + COALESCE((SELECT SUM(GREATEST(batch."jobCount"-batch."processingOffset",0))

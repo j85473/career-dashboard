@@ -6,6 +6,7 @@ ConditionPathExists=/etc/career-dashboard/production-enabled
 ConditionPathExists=/etc/career-dashboard/cloakbrowser.env
 
 [Service]
+ExecCondition=/usr/bin/python3 /opt/career-dashboard/scripts/deployment/m70-storage-monitor.py --allow background
 Type=oneshot
 User=career-dashboard
 Group=career-dashboard

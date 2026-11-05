@@ -271,6 +271,8 @@ if [[ -f /etc/career-dashboard/backup-repository-enabled ]]; then
 fi
 bash "$STAGE/scripts/deployment/install-m70-maintenance.sh" --install-only
 systemctl daemon-reload
+systemctl start career-dashboard-storage-monitor.service
+systemctl enable --now career-dashboard-storage-monitor.timer
 systemctl start career-dashboard.service
 HEALTHY=0
 for ((i=0;i<40;i++)); do

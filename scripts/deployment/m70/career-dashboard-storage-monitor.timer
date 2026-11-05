@@ -1,0 +1,11 @@
+[Unit]
+Description=Check database disk capacity every fifteen seconds
+
+[Timer]
+OnBootSec=10
+OnUnitActiveSec=15
+AccuracySec=1
+Unit=career-dashboard-storage-monitor.service
+
+[Install]
+WantedBy=timers.target

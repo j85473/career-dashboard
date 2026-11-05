@@ -1,4 +1,5 @@
 import { atsRetryColumns, readAtsRetryReason, type AtsRetryReason } from './atsRetryReason';
+import { storageAllows } from './storagePressure';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
 import { reserveFirstCollection } from './atsFirstCollectionAdmission';
@@ -352,6 +353,7 @@ export async function admitAtsV2Board(input: {
   owner?: string;
   segmentSize?: number;
 }): Promise<AtsLedgerClaim | null> {
+  if (!storageAllows('collection')) return null;
   if (NON_API_ATS_PLATFORMS.includes(input.platform)) return null;
   const now = input.now || new Date();
   const owner = input.owner || `${os.hostname()}:${process.pid}`;
@@ -573,6 +575,7 @@ export async function claimNextAtsV2Continuation(input: {
   listingConcurrencyLimit?: number;
   drainOnly?: boolean;
 } = {}): Promise<AtsLedgerClaim | null> {
+  if (!storageAllows('collection')) return null;
   const client = input.client || prisma;
   const now = input.now || new Date();
   const owner = input.owner || `${os.hostname()}:${process.pid}`;
@@ -1644,6 +1647,7 @@ export async function enrichNextAtsV2DetailItem(input: {
   requestTimeoutMs: number;
   allowListingPrefix?: boolean;
 }, dependencies: Partial<AtsJobEnrichmentDependencies> = {}): Promise<'none' | 'terminal' | 'deferred'> {
+  if (!storageAllows('collection')) return 'none';
   const now = new Date();
   const item = await runLedgerTransaction(async (transaction) => {
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
@@ -2037,6 +2041,7 @@ export async function publishReadyAtsV2Segments(input: {
   maxSegments?: number;
   now?: Date;
 }): Promise<{ publishedSegments: number; publishedItems: number; remainingJobs: number }> {
+  if (!storageAllows('background')) return { publishedSegments: 0, publishedItems: 0, remainingJobs: 0 };
   const now = input.now || new Date();
   const allocation = atsPersistenceAllocation(input.lowWatermark, input.highWatermark);
   const maximum = Math.max(1, Math.min(10, Math.floor(input.maxSegments || 10)));
@@ -2125,6 +2130,7 @@ function mergeAtsLedgerItem(rawJson: Prisma.JsonValue | null, overlay: Prisma.Js
 export async function claimNextAtsV2Segment(
   now = new Date(), employerRetryMode: AtsEmployerRetryMode = 'fallback',
 ): Promise<PrefetchedAtsSegment | null> {
+  if (!storageAllows('background')) return null;
   const eligible: Prisma.AtsIngestionSegmentWhereInput = {
     OR: [
       { status: 'published', OR: [{ nextProcessAt: null }, { nextProcessAt: { lte: now } }] },

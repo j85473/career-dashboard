@@ -1,4 +1,5 @@
 import { atsRotationCohortWhere } from './atsRotationCohort';
+import { storageAllows } from './storagePressure';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { firstCollectionSelectionWhere } from './atsFirstCollectionAdmission';
 import { Prisma, type AtsCompany } from './prismaClient';
@@ -693,6 +694,7 @@ export async function runAtsV2ListingQuantum(
   }
   await dependencies.drainAtsV2ListingPrefix(claim, signal, startedAt + ATS_LEDGER_QUANTUM_SOFT_MS);
   for (let pageIndex = 0; pageIndex < pageBudget; pageIndex++) {
+    if (!storageAllows('collection')) return { yieldReason: 'storage_pause' };
     if (signal?.aborted) throw signal.reason || new Error('ATS v2 listing interrupted.');
     if (dependencies.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
       return { yieldReason: 'time_budget' };
@@ -1149,6 +1151,10 @@ export async function runAtsV2ContinuousPublisher(input: {
   const idleDelayMs = Math.max(100, Math.floor(input.idleDelayMs || 1_000));
   while (!input.signal.aborted) {
     try {
+      if (!storageAllows('background')) {
+        await waitForAbortableDelay(input.signal, 15_000);
+        continue;
+      }
       const progress = await publishReadyAtsV2Segments({
         highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
         lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
@@ -1209,6 +1215,10 @@ export async function runAtsV2ContinuousDispatcher(input: {
   const workers = Array.from({ length: totalSlots }, async (_unused, workerIndex) => {
     while (!input.signal.aborted) {
       try {
+        if (!storageAllows('collection')) {
+          await waitForAbortableDelay(input.signal, 15_000);
+          continue;
+        }
         await reconcileIfDue(workerIndex);
         const plan = await readPlan();
         const continuationOnly = input.lanePolicy === 'continuation-only';

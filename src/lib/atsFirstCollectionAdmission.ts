@@ -1,4 +1,5 @@
 import { Prisma } from './prismaClient';
+import { storageAllows } from './storagePressure';
 import { TENANT_ATS_PLATFORMS, AtsFirstCollectionSizeError } from './tenantAtsBoards';
 import { atsRunnableLegacyBatchSql, atsRunnableSegmentSql, atsSegmentPersistenceCapacitySql } from './atsAdmissionCapacity';
 
@@ -153,7 +154,7 @@ export async function firstCollectionHealth(client: Pick<Client, '$queryRaw'>, r
   const persistenceLimit = limit(process.env.ATS_ACQUISITION_JOB_LOW_WATERMARK, 1000);
   // Reserve every bounded page, not just the first response, for a paged catalogue.
   const catalogueByteReserve = reserveBytes * Math.max(1, Math.ceil(reserveJobs / 20));
-  const healthy = !!snapshot && snapshot.gate === 'open'
+  const healthy = storageAllows('collection') && !!snapshot && snapshot.gate === 'open'
     && Number(snapshot.items) + reserveJobs < itemLimit
     && Number(snapshot.bytes) + catalogueByteReserve < byteLimit
     && Number(snapshot.persistence) + reserveJobs < persistenceLimit;

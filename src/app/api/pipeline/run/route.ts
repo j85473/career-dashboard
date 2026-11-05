@@ -1,4 +1,5 @@
 import { NON_API_ATS_PLATFORMS } from '@/lib/browserAtsBoards';
+import { readStoragePressure } from '@/lib/storagePressure';
 import { atsRotationCohortWhere } from '@/lib/atsRotationCohort';
 import { NextResponse } from 'next/server';
 import type { Prisma } from '../../../../lib/prismaClient';
@@ -1287,6 +1288,8 @@ async function orchestratePipeline(releaseLock: () => void) {
 
 export async function POST(request: Request) {
   try {
+    const storage = readStoragePressure();
+    if (storage.backgroundPaused) return NextResponse.json({ message: storage.message, paused: true, storage }, { status: 503 });
     const scheduledRequest = isScheduledPipelineRequest(request);
     if (!scheduledRequest) {
       // A manual start is the explicit resume, and it clears the expiry with it.

@@ -1,4 +1,5 @@
 import { readJSearchProgress } from './jsearch';
+import { storageAllows } from './storagePressure';
 import { readLinkedInSearchProgress } from './linkedinSearch';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -999,6 +1000,7 @@ export async function claimDueIngestionTask(
     defaultLookbackMs?: number;
   } = {},
 ): Promise<ClaimedIngestionTask | null> {
+  if (!storageAllows('collection')) return null;
   await reclassifyGustoBoardTaskBeforeClaim(spec);
   const now = options.now || new Date();
   const taskKey = buildIngestionTaskKey(spec);
