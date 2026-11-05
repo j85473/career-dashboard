@@ -2,8 +2,9 @@ import { Client } from 'pg';
 import { mkdir, open, readFile, rename, stat, statfs, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { hostname } from 'node:os';
+import { createHash } from 'node:crypto';
 import { CRAWL_ARCHIVE_DELETE_ORDER, CRAWL_ARCHIVE_TABLES, CRAWL_ARCHIVE_MAX_BYTES,
-  encodeCrawlArchive, decodeCrawlArchive, verifyCrawlArchive, readCrawlArchive,
+  encodeCrawlArchive, verifyCrawlArchive, readCrawlArchive,
   type ArchiveRow, type CrawlArchive } from '../src/lib/atsCrawlArchive';
 
 export const ARCHIVE_ROOTS = ['/media/nas/career-dashboard-crawl-archive', '/mnt/backup/career-dashboard-crawl-archive'] as const;
@@ -83,7 +84,11 @@ export async function loadCrawlArchive(client: Client, batchId: string): Promise
         }
         if (result.rows.length < 100) break;
       }
-    } finally { await client.query('CLOSE crawl_archive_rows'); }
+    } finally {
+      // A timed-out FETCH aborts the transaction; CLOSE would otherwise mask
+      // the actual held reason with "current transaction is aborted".
+      await client.query('CLOSE crawl_archive_rows').catch(() => undefined);
+    }
     archive.tables[table] = rows;
   }
   verifyCrawlArchive(archive);
@@ -97,8 +102,10 @@ export async function writeArchiveCopy(root: string, location: string, bytes: Bu
   await mkdir(dirname(filename), { recursive: true, mode: 0o750 });
   try {
     const existing = await readFile(filename);
-    decodeCrawlArchive(existing, hash);
-    if (!existing.equals(bytes)) throw new Error('Existing archive differs');
+    assertArchiveCopy(existing, bytes, hash);
+    const handle = await open(filename, 'r');
+    try { await handle.sync(); } finally { await handle.close(); }
+    await syncArchiveParents(root, filename);
     return;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -109,15 +116,28 @@ export async function writeArchiveCopy(root: string, location: string, bytes: Bu
     try { await handle.writeFile(bytes); await handle.sync(); }
     finally { await handle.close(); }
     const restored = await readFile(temporary);
-    decodeCrawlArchive(restored, hash);
-    if (!restored.equals(bytes)) throw new Error('Archive readback differs');
+    assertArchiveCopy(restored, bytes, hash);
     await rename(temporary, filename);
-    // Persist newly created day/version directories as well as the file entry.
-    for (const path of [dirname(filename), dirname(dirname(filename)), root]) {
-      const directory = await open(path, 'r');
-      try { await directory.sync(); } finally { await directory.close(); }
-    }
+    await syncArchiveParents(root, filename);
   } catch (error) { await unlink(temporary).catch(() => undefined); throw error; }
+}
+
+async function syncArchiveParents(root: string, filename: string): Promise<void> {
+  // Include a pre-existing copy: an earlier process may have exited between
+  // rename and directory fsync, before it could publish a database receipt.
+  for (const path of [dirname(filename), dirname(dirname(filename)), root]) {
+    const directory = await open(path, 'r');
+    try { await directory.sync(); } finally { await directory.close(); }
+  }
+}
+
+function assertArchiveCopy(copy: Buffer, verifiedBytes: Buffer, hash: string): void {
+  // encodeCrawlArchive validated the entire source and produced these exact
+  // compressed bytes. Equality plus checksum proves the disk copy contains
+  // that same complete archive without repeatedly decoding/hashing every row.
+  if (createHash('sha256').update(copy).digest('hex') !== hash || !copy.equals(verifiedBytes)) {
+    throw new Error('Archive copy differs from the complete verified source');
+  }
 }
 
 export async function archiveOneCrawl(client: Client, batchId: string, apply: boolean,
@@ -128,7 +148,7 @@ export async function archiveOneCrawl(client: Client, batchId: string, apply: bo
     await client.query("SET LOCAL statement_timeout='30s'");
     await client.query("SET LOCAL idle_in_transaction_session_timeout='120s'");
     const archive = await loadCrawlArchive(client, batchId);
-    const counts = verifyCrawlArchive(archive);
+    const counts = Object.fromEntries(CRAWL_ARCHIVE_TABLES.map(table => [table, archive.tables[table].length]));
     const { bytes, hash } = encodeCrawlArchive(archive);
     const location = `v1/${String(archive.batch.createdAt).slice(0, 10)}/${batchId}-${hash}.json.gz`;
     const result = { batchId, rows: CRAWL_ARCHIVE_DELETE_ORDER.reduce((n, table) => n + counts[table], 0), archiveBytes: bytes.length, hash, location };
@@ -137,7 +157,7 @@ export async function archiveOneCrawl(client: Client, batchId: string, apply: bo
       for (const root of roots) await writeArchiveCopy(root, location, bytes, hash);
       // Verify both published copies again before granting this transaction its
       // narrow delete capability. Interrupted copies never change the database.
-      for (const root of roots) await readCrawlArchive([root], location, hash);
+      for (const root of roots) assertArchiveCopy(await readFile(join(root, location)), bytes, hash);
       await client.query("SELECT set_config('career_dashboard.ats_v2_writer','2',true), set_config('career_dashboard.archive_batch',$1,true)", [batchId]);
       const updated = await client.query(`UPDATE "AtsIngestionBatch" SET "archiveEligibleAt"=now() AT TIME ZONE 'UTC',
         "archivePartitionDay"="processedAt"::date,"archiveLocation"=$2,"archiveContentHash"=$3,"archiveBytes"=$4,

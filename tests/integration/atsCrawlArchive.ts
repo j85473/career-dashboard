@@ -1,10 +1,10 @@
 /** Run against an empty schema-only rehearsal database, never production. */
 import assert from 'node:assert/strict';
 import { Client } from 'pg';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { archiveOneCrawl, loadCrawlArchive } from '../../scripts/archive_ats_crawls';
+import { ARCHIVE_ROOTS, archiveOneCrawl, loadCrawlArchive } from '../../scripts/archive_ats_crawls';
 import { CRAWL_ARCHIVE_TABLES, CRAWL_ARCHIVE_DELETE_ORDER, readCrawlArchive } from '../../src/lib/atsCrawlArchive';
 
 const database = process.env.ATS_ARCHIVE_TEST_DATABASE || '';
@@ -24,8 +24,11 @@ async function insertRows(table: string, rows: Record<string, unknown>[]) {
 }
 try {
   assert.equal((await test.query('SELECT count(*)::int AS n FROM "AtsIngestionBatch"')).rows[0].n, 0);
+  const receipt = (await source.query('SELECT "archiveLocation","archiveContentHash" FROM "AtsIngestionBatch" WHERE id=$1', [batchId])).rows[0];
   await source.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
-  const archive = await loadCrawlArchive(source, batchId);
+  const archive = receipt?.archiveLocation
+    ? await readCrawlArchive(ARCHIVE_ROOTS, receipt.archiveLocation, receipt.archiveContentHash)
+    : await loadCrawlArchive(source, batchId);
   await source.query('ROLLBACK');
   const sourceJob = (await source.query('SELECT to_jsonb(t) AS row FROM "Job" t WHERE "aimFitScore" IS NOT NULL LIMIT 1')).rows[0].row;
   await test.query("SET session_replication_role='replica'");
@@ -63,6 +66,15 @@ try {
   await assert.rejects(archiveOneCrawl(test, batchId, true, [roots[0], failedRoot]));
   assert.deepEqual(await rawCounts(), before, 'failed second archive copy changed source rows');
   assert.equal((await test.query('SELECT "archiveVerifiedAt" FROM "AtsIngestionBatch"')).rows[0].archiveVerifiedAt, null);
+  const preview = await archiveOneCrawl(test, batchId, false, roots);
+  const firstCopy = join(roots[0], preview.location);
+  const intact = await readFile(firstCopy);
+  const corrupted = Buffer.from(intact);
+  corrupted[Math.floor(corrupted.length / 2)] ^= 1;
+  await writeFile(firstCopy, corrupted);
+  await assert.rejects(archiveOneCrawl(test, batchId, true, roots), /Archive copy differs/);
+  assert.deepEqual(await rawCounts(), before, 'corrupted archive copy changed source rows');
+  await writeFile(firstCopy, intact);
   const result = await archiveOneCrawl(test, batchId, true, roots);
   assert.deepEqual(await rawCounts(), [0, 0, 0, 0]);
   assert.deepEqual((await test.query('SELECT md5(to_jsonb(t)::text) AS hash FROM "Job" t')).rows, scoreBefore);
@@ -83,7 +95,7 @@ try {
   }
   assert.deepEqual(await rawCounts(), before);
   console.log(JSON.stringify({ passed: true, batchId, archivedRows: result.rows,
-    checks: ['lossy JSON null/large numbers held', 'application deletion refused', 'failed copy rolled back', 'two complete copies verified', 'scores preserved', 'every archived column restored'] }));
+    checks: ['lossy JSON null/large numbers held', 'application deletion refused', 'failed copy rolled back', 'corrupted copy refused', 'two complete copies verified', 'scores preserved', 'every archived column restored'] }));
 } finally {
   await source.end(); await test.end(); await rm(directory, { recursive: true, force: true });
 }
