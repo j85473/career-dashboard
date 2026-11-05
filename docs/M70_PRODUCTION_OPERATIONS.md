@@ -224,6 +224,9 @@ plan does not duplicate a release. Unavailable or unverifiable sources stay
 held, and a verified first posting does not establish the employer of every
 other posting in an older multi-posting segment. Verify actual consumer
 progress after application; registered evidence alone is not a processed job.
+Older Oracle/UKG segments reconcile one posting at a time so an unresolved
+neighbor cannot prevent a verified prefix from advancing. New single-posting
+handoffs and other platforms retain their existing processing width.
 
 ### Reconciling the four-day API rotation
 

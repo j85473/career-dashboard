@@ -6,9 +6,28 @@ import test from 'node:test';
 import {
   ATS_PREFETCHED_JOB_WAVE_CONCURRENCY,
   atsBatchItemAuditFields,
+  atsPrefetchedWaveConcurrency,
   processAtsItemsInBoundedWaves,
   recoverAtsBatchItemOutcome,
 } from '../jobIngestion';
+
+test('older Oracle and UKG chunks save verified progress before an unresolved neighbor', async () => {
+  for (const platform of ['oracle', 'ukg']) {
+    const prefixes: number[] = [], attempted: number[] = [];
+    await assert.rejects(processAtsItemsInBoundedWaves({
+      items: [0, 1, 2, 3],
+      concurrency: atsPrefetchedWaveConcurrency({ handoffKind: 'ledger_segment', platform, totalJobCount: 25 }),
+      processItem: async item => { attempted.push(item); if (item === 2) throw new Error('Employer remains unverified'); return 'duplicate'; },
+      onWaveReconciled: prefix => { prefixes.push(prefix); },
+    }), /Employer remains unverified/);
+    assert.deepEqual(prefixes, [1, 2]); assert.deepEqual(attempted, [0, 1, 2]);
+  }
+  for (const handoff of [{ handoffKind: 'ledger_segment' as const, platform: 'oracle', totalJobCount: 1 },
+    { handoffKind: 'ledger_segment' as const, platform: 'greenhouse', totalJobCount: 25 },
+    { handoffKind: 'legacy_batch' as const, platform: 'oracle', totalJobCount: 25 }]) {
+    assert.equal(atsPrefetchedWaveConcurrency(handoff), ATS_PREFETCHED_JOB_WAVE_CONCURRENCY);
+  }
+});
 
 test('prefetched ATS jobs fill the bounded write width and checkpoint whole waves', async () => {
   let active = 0;

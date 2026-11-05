@@ -231,6 +231,14 @@ export const ATS_PREFETCHED_JOB_WAVE_CONCURRENCY = Number.isFinite(INGESTION_JOB
 
 type PrefetchedAtsHandoff = PrefetchedAtsBatch | PrefetchedAtsSegment;
 
+/** Older Oracle/UKG manifests can mix verified and held postings. Reconcile
+ * each completed posting before an unresolved neighbor interrupts the suffix.
+ * The immutable manifest and the saved retry date do not need to change. */
+export function atsPrefetchedWaveConcurrency(handoff: Pick<PrefetchedAtsHandoff, 'handoffKind' | 'platform' | 'totalJobCount'>): number {
+  return handoff.handoffKind === 'ledger_segment' && handoff.totalJobCount > 1
+    && ['oracle', 'ukg'].includes(handoff.platform) ? 1 : ATS_PREFETCHED_JOB_WAVE_CONCURRENCY;
+}
+
 function prefetchedAtsAuditContext(
   handoff: PrefetchedAtsHandoff,
   chunkJobIndex: number,
@@ -6084,7 +6092,7 @@ export async function ingestJobs(
           if (options.prefetchedAtsBatch) {
             await processAtsItemsInBoundedWaves({
               items: jobs,
-              concurrency: ATS_PREFETCHED_JOB_WAVE_CONCURRENCY,
+              concurrency: atsPrefetchedWaveConcurrency(options.prefetchedAtsBatch),
               beforeWave: throwIfAtsInterrupted,
               processItem: processAtsJob,
               onWaveReconciled: () => {

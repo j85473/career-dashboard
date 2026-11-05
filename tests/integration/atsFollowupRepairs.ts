@@ -8,7 +8,9 @@ import type { Prisma } from '../../src/lib/prismaClient';
 import { employerProofFixture } from '../fixtures/atsEmployerProof';
 import { applyRetainedEmployerPlan, retainedEmployerPlanHash, type RetainedEmployerPlan } from '../../src/lib/retainedAtsEmployerRepair';
 import { verifiedAtsPostingEvidence } from '../../src/lib/atsEmployerRegistry';
-import { atsV2PersistenceCapacityBacklog, publishReadyAtsV2Segments } from '../../src/lib/atsAcquisitionLedger';
+import { atsV2PersistenceCapacityBacklog, publishReadyAtsV2Segments, atsLedgerHash, claimNextAtsV2Segment } from '../../src/lib/atsAcquisitionLedger';
+import { ingestJobs } from '../../src/lib/jobIngestion';
+import { ATS_JOB_ENRICHMENT_KEY } from '../../src/lib/atsJobEnrichment';
 import { publicCrawlCapacity } from '../../src/lib/publicCrawlCapacity';
 import { readAtsFlowSnapshot } from '../../src/lib/atsFlowHealth';
 
@@ -128,6 +130,39 @@ async function main() {
   await prisma.ingestionSourceRun.create({ data: { source: 'ATS-adp', status: 'success', seenCount: 1, duplicateCount: 1, createdAt: now } });
   assert.equal((await readAtsFlowSnapshot(prisma, now)).sources.some(s => s.stalled), false, 'A duplicate check is actual progress');
   assert.deepEqual(await prisma.job.findUnique({ where: { id: job.id } }), job, 'All existing card fields and scores remain unchanged');
+  // Exercise the actual importer, including its persisted completion receipt.
+  // A verified first posting must advance even when its next neighbor is held.
+  await finish({ batchId: batch.id });
+  await prisma.providerCircuit.create({ data: { provider: 'ATS-oracle', state: 'open',
+    openUntil: new Date(Date.now() + 3600_000) } }); // Keep fixture recovery offline.
+  const mixedBatch = batch;
+  const mixedItems = [];
+  for (let ordinal = 0; ordinal < 3; ordinal++) {
+    const input = { ...posting.job, id: String(1000 + ordinal), publicAtsPostingId: String(1000 + ordinal),
+      url: String(posting.job!.url).replace('/1000/', `/${1000 + ordinal}/`),
+      location: 'Minneapolis, MN', company: ordinal === 2 ? 'Verified Employer' : '' };
+    const overlay = { [ATS_JOB_ENRICHMENT_KEY]: { version: 1, status: 'unavailable', platform: 'oracle',
+      detailSource: 'ATS-oracle Details', attempted: true, completedAt: now.toISOString(), description: null,
+      company: null, location: null, compensation: null } };
+    mixedItems.push(await prisma.atsIngestionItem.create({ data: { batchId: mixedBatch.id, ledgerGeneration: 1,
+      canonicalOrdinal: 6000 + ordinal, rawHash: atsLedgerHash(input), rawJson: input, enrichmentOverlay: overlay,
+      enrichmentStatus: 'terminal', enrichmentVersion: 1, terminalAt: now } }));
+  }
+  const manifest = atsLedgerHash(mixedItems.map(item => ({ ordinal: item.canonicalOrdinal, rawHash: item.rawHash,
+    overlayHash: atsLedgerHash(item.enrichmentOverlay), enrichmentVersion: item.enrichmentVersion, terminalAt: now.toISOString() })));
+  const mixedSegment = await prisma.atsIngestionSegment.create({ data: { batchId: mixedBatch.id, ledgerGeneration: 1,
+    segmentOrdinal: 240, segmentSize: 25, firstOrdinal: 6000, lastOrdinal: 6002, itemCount: 3, enrichmentVersion: 1,
+    manifestHash: manifest, status: 'published', publishedAt: now, nextProcessAt: now } });
+  const claim = await claimNextAtsV2Segment(); assert.ok(claim); assert.equal(claim.id, mixedSegment.id);
+  await ingestJobs(undefined, undefined, undefined, undefined, 'pending_af', false, {
+    useStandard: false, usePaidApis: false, useCareerforce: false, atsPlatform: 'oracle', prefetchedAtsBatch: claim,
+  });
+  const mixedAfter = await prisma.atsIngestionSegment.findUniqueOrThrow({ where: { id: mixedSegment.id } });
+  assert.equal(mixedAfter.processingOffset, 1, 'The actual importer saves the verified prefix before a held neighbor');
+  assert.equal(mixedAfter.retryCode, 'employer_unverified'); assert.equal(mixedAfter.status, 'published');
+  assert.equal(mixedAfter.manifestHash, manifest); assert.ok(mixedAfter.nextProcessAt! > now);
+  assert.deepEqual(await prisma.atsIngestionItem.findMany({ where: { id: { in: mixedItems.map(item => item.id) } }, orderBy: { canonicalOrdinal: 'asc' } }), mixedItems);
+  assert.deepEqual(await prisma.job.findUnique({ where: { id: job.id } }), job);
   console.log('PASS: real publisher headroom and refill; bounded, idempotent employer repair; capacity, lease, retry-date, offset and identity guards; immutable source/manifests and score preservation; timezone-safe flow and pause-aware starvation detection.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => prisma.$disconnect());
