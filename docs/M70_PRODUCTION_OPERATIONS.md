@@ -555,6 +555,19 @@ working space; never run an unbudgeted `VACUUM FULL` against the nearly full
 NVMe. The collection pause clears only when physical free space reaches its
 40 GiB recovery threshold.
 
+For supervised compaction, create the root-owned marker
+`/etc/career-dashboard/storage-maintenance` and refresh the storage monitor.
+This pauses guarded background writers even if a temporary table relocation
+makes the NVMe appear empty. Hold both deployment and backup locks, compact
+only the four crawler evidence tables, and check destination capacity before
+moving any data. The installed PostgreSQL 17 `pg_repack` utility can use the
+private NAS tablespace `career_crawl_repack` as working space, with
+`--no-kill-backend --wait-timeout=5 --no-order --moveidx`. Return the compacted
+table and all its indexes to `pg_default`, verify their placement and data,
+then remove the marker and refresh the monitor. Keep the marker if recovery
+is interrupted. Never delete tablespace files manually or leave a live table
+dependent on temporary working storage.
+
 ## Database tuning
 
 PostgreSQL arrived on the M70 still carrying the settings it had on the Pi, which were sized for four cores, 3.7 GiB of RAM and a USB-attached SSD the kernel reported as rotational. On a twelve-thread machine with 15 GiB of RAM and an internal SATA SSD those values throttle ingestion: the buffer cache was 128 MB against a 15 GB database, the planner was told random reads cost four times a sequential one, and only one read could be issued at a time.

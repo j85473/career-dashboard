@@ -1,5 +1,5 @@
 import { Client } from 'pg';
-import { mkdir, open, readFile, rename, stat, statfs, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat, statfs, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { hostname } from 'node:os';
 import { CRAWL_ARCHIVE_DELETE_ORDER, CRAWL_ARCHIVE_TABLES, CRAWL_ARCHIVE_MAX_BYTES,
@@ -12,6 +12,15 @@ const STATE = '/var/lib/career-dashboard/crawl-archive/state.json';
 const CONFIG = '/etc/career-dashboard/crawl-archive-enabled';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+
+async function saveState(state: unknown): Promise<void> {
+  const file = await open(`${STATE}.tmp`, 'w', 0o640);
+  try { await file.writeFile(JSON.stringify(state)); await file.sync(); }
+  finally { await file.close(); }
+  await rename(`${STATE}.tmp`, STATE);
+  const directory = await open(dirname(STATE), 'r');
+  try { await directory.sync(); } finally { await directory.close(); }
+}
 
 async function rootsReady(): Promise<void> {
   const [nas, backup, root] = await Promise.all(['/media/nas', '/mnt/backup', '/'].map(path => stat(path)));
@@ -171,6 +180,14 @@ export async function runCrawlArchive(argv: string[]): Promise<void> {
       // A missing mount or exhausted shared disk stops the pass. It is not a
       // defect in an individual batch and must not advance past that batch.
       if (mode === '--apply') await rootsReady();
+      state.cursor = id;
+      state.priorityCount = rawObservationCount;
+      if (mode === '--apply' && !requestedId) {
+        // Persist the next cursor before potentially expensive work. A process
+        // interruption leaves its transaction intact or rolled back, then the
+        // next pass can proceed instead of retrying one oversized batch forever.
+        await saveState({ ...state, updatedAt: new Date().toISOString(), attemptingBatch: id });
+      }
       try {
         const result = await archiveOneCrawl(client, id, mode === '--apply');
         completed++;
@@ -183,13 +200,10 @@ export async function runCrawlArchive(argv: string[]): Promise<void> {
         console.error(JSON.stringify({ held: id, reason: String(error) }));
         if (requestedId) throw error;
       }
-      state.cursor = id;
-      state.priorityCount = rawObservationCount;
     }
     if (candidates.length === 0) { state.cursor = ''; state.priorityCount = null; }
     if (mode === '--apply' && !requestedId) {
-      await writeFile(`${STATE}.tmp`, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }), { mode: 0o640 });
-      await rename(`${STATE}.tmp`, STATE);
+      await saveState({ ...state, updatedAt: new Date().toISOString(), attemptingBatch: null });
     }
     console.log(JSON.stringify({ mode, completed, cumulativeBatches: state.archivedBatches, cumulativeRows: state.archivedRows, held: state.held.length }));
   } finally { await client.end(); }

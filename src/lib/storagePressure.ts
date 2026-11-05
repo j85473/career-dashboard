@@ -4,7 +4,7 @@ import { hostname } from 'node:os';
 export type StoragePressure = {
   version: 1;
   checkedAt: string;
-  level: 'disabled' | 'normal' | 'warning' | 'collection_paused' | 'critical' | 'unknown';
+  level: 'disabled' | 'normal' | 'warning' | 'collection_paused' | 'critical' | 'maintenance' | 'unknown';
   freeBytes: number | null;
   totalBytes: number | null;
   collectionPaused: boolean;
@@ -28,6 +28,9 @@ export function evaluateStoragePressure(snapshot: StoragePressure | null, freeBy
   if (unknown) return { version: 1, checkedAt: new Date(now).toISOString(), level: 'unknown', freeBytes, totalBytes,
     collectionPaused: true, backgroundPaused: true,
     message: 'Background work is paused because database disk capacity cannot be verified. Your saved jobs remain available.' };
+  if (snapshot.level === 'maintenance') return { ...snapshot, freeBytes, totalBytes,
+    collectionPaused: true, backgroundPaused: true,
+    message: 'Background work is paused while completed crawl storage is compacted. Your saved jobs remain available.' };
   const critical = freeBytes < STORAGE_LIMITS.critical || snapshot.backgroundPaused;
   const paused = critical || freeBytes < STORAGE_LIMITS.collection || snapshot.collectionPaused;
   const level = critical ? 'critical' : paused ? 'collection_paused' : freeBytes < STORAGE_LIMITS.warning ? 'warning' : 'normal';

@@ -33,6 +33,34 @@ test('missing, stale, future, malformed and unreadable disk evidence all hold ba
   assert.equal(evaluateStoragePressure(snapshot, null, null, now).backgroundPaused, true);
 });
 
+test('temporary compaction space never resumes writers before the files return', () => {
+  const actual = evaluateStoragePressure({ ...snapshot, level: 'maintenance' }, 100 * GIB, 234 * GIB, now);
+  assert.equal(actual.backgroundPaused, true);
+  assert.equal(actual.collectionPaused, true);
+  assert.match(actual.message, /compacted/);
+  const result = spawnSync('python3', ['-c', `
+import importlib.util
+from types import SimpleNamespace
+from unittest.mock import patch
+spec=importlib.util.spec_from_file_location('monitor','scripts/deployment/m70-storage-monitor.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+def sample(free,maintenance,prior):
+ saved={}
+ with patch.object(m.socket,'gethostname',return_value='m70'), patch.object(m.os.path,'ismount',return_value=True), patch.object(m.os,'stat',return_value=SimpleNamespace(st_dev=1)), patch.object(m.os,'statvfs',return_value=SimpleNamespace(f_bavail=free,f_frsize=m.GIB,f_blocks=234)), patch.object(m.Path,'exists',return_value=maintenance), patch.object(m,'load',side_effect=lambda path,default: prior if path==m.STATE else []), patch.object(m,'atomic_json',side_effect=lambda path,value: saved.update({str(path):value})):
+  m.main()
+ return saved[str(m.STATE)]
+held=sample(35,True,{'collectionPaused':True})
+assert held['level']=='maintenance' and held['backgroundPaused']
+released=sample(35,False,held)
+assert released['level']=='collection_paused' and not released['backgroundPaused']
+temporary=sample(100,True,held)
+assert temporary['backgroundPaused'] and temporary['collectionPaused']
+finished=sample(45,False,temporary)
+assert finished['level']=='normal' and not finished['backgroundPaused'] and not finished['collectionPaused']
+`], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
 test('a physical-space pause prevents public crawler admission before any database claim', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'career-storage-test-'));
   const originalFile = process.env.CAREER_STORAGE_STATUS_FILE, originalPath = process.env.CAREER_STORAGE_TEST_PATH;

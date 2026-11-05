@@ -52,10 +52,20 @@ def main():
             raise RuntimeError('Database disk is not mounted at the expected location')
         disk = os.statvfs(root)
         free, total = disk.f_bavail * disk.f_frsize, disk.f_blocks * disk.f_frsize
-        critical, paused = pressure(free, prior)
+        critical, paused = pressure(free, {
+            'backgroundPaused': prior.get('diskBackgroundPaused', prior.get('backgroundPaused', False)),
+            'collectionPaused': prior.get('diskCollectionPaused', prior.get('collectionPaused', False)),
+        })
         result.update(freeBytes=free, totalBytes=total, backgroundPaused=critical, collectionPaused=paused,
+                      diskBackgroundPaused=critical, diskCollectionPaused=paused,
                       level='critical' if critical else 'collection_paused' if paused else 'warning' if free < 40 * GIB else 'normal',
                       message='')
+        # A table moved temporarily to another disk can make the NVMe appear
+        # recovered before its compacted files have returned. Do not resume
+        # writers in that interval, and keep physical hysteresis independent.
+        if Path('/etc/career-dashboard/storage-maintenance').exists():
+            result.update(level='maintenance', collectionPaused=True, backgroundPaused=True,
+                          message='Compacting completed crawl storage.')
         history = load(HISTORY, [])
         history = [row for row in history if now - row['at'] <= 30 * 86400]
         if not history or now - history[-1]['at'] >= 3600:

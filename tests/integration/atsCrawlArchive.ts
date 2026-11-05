@@ -16,6 +16,12 @@ const test = new Client({ ...connection, database, application_name: 'archive-re
 await source.connect(); await test.connect();
 const directory = await mkdtemp(join(tmpdir(), 'career-archive-integration-'));
 const roots = [join(directory, 'first'), join(directory, 'second')];
+async function insertRows(table: string, rows: Record<string, unknown>[]) {
+  for (let offset = 0; offset < rows.length; offset += 250) {
+    await test.query(`INSERT INTO "${table}" SELECT * FROM jsonb_populate_recordset(NULL::"${table}",$1::jsonb)`,
+      [JSON.stringify(rows.slice(offset, offset + 250))]);
+  }
+}
 try {
   assert.equal((await test.query('SELECT count(*)::int AS n FROM "AtsIngestionBatch"')).rows[0].n, 0);
   await source.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
@@ -24,9 +30,7 @@ try {
   const sourceJob = (await source.query('SELECT to_jsonb(t) AS row FROM "Job" t WHERE "aimFitScore" IS NOT NULL LIMIT 1')).rows[0].row;
   await test.query("SET session_replication_role='replica'");
   await test.query('INSERT INTO "AtsIngestionBatch" SELECT * FROM jsonb_populate_record(NULL::"AtsIngestionBatch",$1::jsonb)', [JSON.stringify(archive.batch)]);
-  for (const table of CRAWL_ARCHIVE_TABLES) for (const row of archive.tables[table]) {
-    await test.query(`INSERT INTO "${table}" SELECT * FROM jsonb_populate_record(NULL::"${table}",$1::jsonb)`, [JSON.stringify(row)]);
-  }
+  for (const table of CRAWL_ARCHIVE_TABLES) await insertRows(table, archive.tables[table]);
   await test.query('INSERT INTO "Job" SELECT * FROM jsonb_populate_record(NULL::"Job",$1::jsonb)', [JSON.stringify(sourceJob)]);
   await test.query("SET session_replication_role='origin'");
   const scoreBefore = (await test.query('SELECT md5(to_jsonb(t)::text) AS hash FROM "Job" t')).rows;
@@ -57,11 +61,13 @@ try {
   // Reconstruct every retired row in the isolated database and compare all
   // native PostgreSQL values, including dates, JSON and bigint fields.
   for (const table of [...CRAWL_ARCHIVE_DELETE_ORDER].reverse()) {
-    for (const row of archive.tables[table]) {
-      await test.query(`INSERT INTO "${table}" SELECT * FROM jsonb_populate_record(NULL::"${table}",$1::jsonb)`, [JSON.stringify(row)]);
-      const comparison = await test.query(`SELECT to_jsonb(t)=to_jsonb(jsonb_populate_record(NULL::"${table}",$2::jsonb)) AS same
-        FROM "${table}" t WHERE id=$1`, [row.id, JSON.stringify(row)]);
-      assert.equal(comparison.rows[0].same, true, `Restored ${table} row differs`);
+    await insertRows(table, archive.tables[table]);
+    for (let offset = 0; offset < archive.tables[table].length; offset += 250) {
+      const original = archive.tables[table].slice(offset, offset + 250);
+      const comparison = await test.query(`SELECT count(*)::int AS n, bool_and(to_jsonb(t)=to_jsonb(original)) AS same
+        FROM jsonb_populate_recordset(NULL::"${table}",$1::jsonb) original JOIN "${table}" t USING(id)`, [JSON.stringify(original)]);
+      assert.equal(comparison.rows[0].n, original.length);
+      assert.equal(comparison.rows[0].same, true, `Restored ${table} rows differ`);
     }
   }
   assert.deepEqual(await rawCounts(), before);
