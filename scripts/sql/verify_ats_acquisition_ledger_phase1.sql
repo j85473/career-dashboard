@@ -68,7 +68,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
-       AND batch."archiveVerifiedAt" IS NULL
+       AND batch."archiveVerifiedAt" IS NULL AND batch."rawDisposedAt" IS NULL
        AND batch."rawObservationCount" <> (
          SELECT COUNT(*) FROM "AtsListingObservation" observation
           WHERE observation."batchId" = batch.id
@@ -81,7 +81,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
-       AND batch."archiveVerifiedAt" IS NULL
+       AND batch."archiveVerifiedAt" IS NULL AND batch."rawDisposedAt" IS NULL
        AND batch."canonicalOccurrenceCount" <> (
          SELECT COUNT(*) FROM "AtsIngestionItem" item
           WHERE item."batchId" = batch.id
@@ -95,7 +95,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
-       AND batch."archiveVerifiedAt" IS NULL
+       AND batch."archiveVerifiedAt" IS NULL AND batch."rawDisposedAt" IS NULL
        AND batch."terminalItemCount" <> (
          SELECT COUNT(*) FROM "AtsIngestionItem" item
           WHERE item."batchId" = batch.id
@@ -110,7 +110,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
-       AND batch."archiveVerifiedAt" IS NULL
+       AND batch."archiveVerifiedAt" IS NULL AND batch."rawDisposedAt" IS NULL
        AND batch."sealedItemCount" <> (
          SELECT COALESCE(SUM(segment."itemCount"), 0)
            FROM "AtsIngestionSegment" segment
@@ -125,7 +125,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
-       AND batch."archiveVerifiedAt" IS NULL
+       AND batch."archiveVerifiedAt" IS NULL AND batch."rawDisposedAt" IS NULL
        AND batch."publishedItemCount" <> (
          SELECT COALESCE(SUM(segment."itemCount"), 0)
            FROM "AtsIngestionSegment" segment
@@ -158,7 +158,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
-       AND batch."archiveVerifiedAt" IS NULL
+       AND batch."archiveVerifiedAt" IS NULL AND batch."rawDisposedAt" IS NULL
        AND batch."sealedItemCount" > 0
        AND (batch."manifestHash" IS NULL OR btrim(batch."manifestHash") = '')
   ) OR EXISTS (
@@ -198,7 +198,7 @@ BEGIN
     SELECT 1
       FROM "AtsIngestionBatch" batch
      WHERE batch."writerMode" = 'v2'
-       AND batch."archiveVerifiedAt" IS NULL
+       AND batch."archiveVerifiedAt" IS NULL AND batch."rawDisposedAt" IS NULL
        AND batch.status IN ('queued', 'processing', 'processed')
        AND EXISTS (
          SELECT 1 FROM "AtsListingObservation" observation
@@ -210,6 +210,21 @@ BEGIN
        )
   ) THEN
     RAISE EXCEPTION 'A synchronized/processed v2 batch contains unresolved raw observations.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM "AtsIngestionBatch" batch
+     WHERE batch."rawDisposedAt" IS NOT NULL AND (
+       batch.status <> 'processed' OR batch."writerMode" <> 'v2'
+       OR batch."rawDisposalReceipt"->>'policy' IS DISTINCT FROM 'completed-acquisition-v1'
+       OR batch."rawDisposalReceipt"->>'batchId' IS DISTINCT FROM batch.id
+       OR EXISTS (SELECT 1 FROM "AtsIngestionPage" r WHERE r."batchId"=batch.id)
+       OR EXISTS (SELECT 1 FROM "AtsListingObservation" r WHERE r."batchId"=batch.id)
+       OR EXISTS (SELECT 1 FROM "AtsIngestionItem" r WHERE r."batchId"=batch.id)
+       OR EXISTS (SELECT 1 FROM "AtsListingObservationResolution" r WHERE r."batchId"=batch.id)
+     )
+  ) THEN
+    RAISE EXCEPTION 'An ATS disposal receipt is invalid or raw rows survived its transaction.';
   END IF;
 
   IF EXISTS (

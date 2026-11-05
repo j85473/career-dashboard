@@ -496,7 +496,43 @@ storing its JSON a second time. Readers verify the reference and content hash.
 Older inline items remain readable; no existing scores or raw evidence are
 rewritten by this change.
 
-Completed v2 crawls become eligible for cold storage 30 days after processing,
+#### Completed acquisition deletion policy (November 5)
+
+The active retention worker now permanently disposes of redundant acquisition
+payloads instead of producing indefinite archives. A run must be processed and
+synchronized, at least 24 hours past completion, have no reset, processing errors
+or live/unknown leases, and pass the complete page, item, resolution and segment
+verification. The newest completed snapshot for each board is retained for the
+existing metadata repair tools. Unfinished and unverifiable work stays intact.
+
+Only raw pages, listing observations, ingestion items and their resolutions are
+deleted. The job catalog, descriptions, scores, application history, attachments,
+job-source observations, completion summaries and outcome receipts remain.
+An immutable disposal receipt records the policy, counts, completion time and
+verification hash. Its publication and raw-row deletion commit together; a
+failure rolls both back. Application database identities cannot invoke disposal.
+
+Previously created archive copies for qualifying runs are deleted after that
+receipt commits. Exact paths and checksums are checked before unlinking; partial
+file cleanup is retryable. The archive reader reports intentional disposal
+instead of treating it as an unexplained missing file. Geography exclusion and
+case-consolidation tools cannot infer negative evidence from disposed history.
+
+The existing `career-dashboard-crawl-archive.timer` owns the bounded deletion
+worker, sharing the backup lock and respecting storage maintenance. Enable it
+with the root-controlled file `/etc/career-dashboard/crawl-disposal-enabled`:
+`{"policy":"completed-acquisition-v1","recoveryHours":24,"keepLatestPerBoard":true}`.
+Progress is in `/var/lib/career-dashboard/crawl-archive/disposal-state.json`.
+The database receipts are authoritative if a process ends before saving counters.
+Preview one run using the installed `scripts/deployment/crawl-disposal.mjs`
+entrypoint with `--preview BATCH_UUID`; `--apply` requires the enabled policy.
+
+Deletion makes database space reusable. It does not promise immediate filesystem
+shrinkage; physical reclamation is a separate, capacity-budgeted maintenance job.
+
+#### Earlier archive format (superseded as the active retention policy)
+
+The earlier archive worker made completed v2 crawls eligible 30 days after processing,
 not 30 days after download. The archive worker requires synchronized lifecycle,
 no operator reset or active leases, complete page and observation hashes,
 terminal items, complete resolutions, and fully processed segments with matching

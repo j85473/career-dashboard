@@ -113,7 +113,7 @@ async function main(argv: string[]): Promise<void> {
       left join "AtsListingObservation" o on o.id=i."representativeObservationId" AND i."rawJson" IS NULL
       join "AtsIngestionBatch" b on b.id = i."batchId"
       where COALESCE(i."rawJson", o."rawJson") is not null
-        AND NOT EXISTS (SELECT 1 FROM "AtsIngestionBatch" archived WHERE archived.slug=b.slug AND archived.platform=b.platform AND archived."archiveVerifiedAt" IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM "AtsIngestionBatch" archived WHERE archived.slug=b.slug AND archived.platform=b.platform AND (archived."archiveVerifiedAt" IS NOT NULL OR archived."rawDisposedAt" IS NOT NULL))
       group by 1, 2
     )
     select p.*, c."status"

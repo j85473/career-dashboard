@@ -93,3 +93,17 @@ test('archive retrieval detects corruption, uses the second copy, and rejects pa
     await assert.rejects(readCrawlArchive(roots, location, hash), /Neither crawl archive copy/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+
+test('disposal uses a one-day window while existing archives keep their thirty-day validation', () => {
+  const now = Date.parse('2026-11-05T21:00:00Z');
+  const fixture = archiveFixture();
+  fixture.batch.processedAt = new Date(now - 2 * 86400000).toISOString();
+  assert.throws(() => verifyCrawlArchive(fixture, now), /too recent/);
+  assert.equal(verifyCrawlArchive(fixture, now, 1).AtsListingObservation, 1);
+  fixture.batch.processedAt = new Date(now - 23 * 3600000).toISOString();
+  assert.throws(() => verifyCrawlArchive(fixture, now, 1), /too recent/);
+  fixture.batch.processedAt = '2020-01-01T00:00:00Z';
+  fixture.batch.rawDisposedAt = '2026-11-01T00:00:00Z';
+  assert.throws(() => verifyCrawlArchive(fixture, now, 1), /Crawl archive held/);
+});

@@ -6,4 +6,4 @@ set -euo pipefail
 exec 8>/var/lib/career-dashboard/backup.lock
 flock -n 8 || exit 0
 exec runuser -u postgres -g career-dashboard -- /usr/local/bin/node --max-old-space-size=2048 \
-  /opt/career-dashboard/scripts/deployment/crawl-archive.mjs --apply
+  /opt/career-dashboard/scripts/deployment/crawl-disposal.mjs --apply

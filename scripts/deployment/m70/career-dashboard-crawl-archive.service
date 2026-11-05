@@ -1,8 +1,8 @@
 [Unit]
-Description=Archive verified completed crawler evidence after thirty days
+Description=Delete verified superseded acquisition payloads after their recovery window
 After=postgresql.service
 ConditionPathExists=/etc/career-dashboard/production-enabled
-ConditionPathExists=/etc/career-dashboard/crawl-archive-enabled
+ConditionPathExists=/etc/career-dashboard/crawl-disposal-enabled
 ConditionPathExists=!/etc/career-dashboard/storage-maintenance
 
 [Service]

@@ -472,6 +472,9 @@ model AtsIngestionBatch {
   archiveContentHash        String?
   archiveBytes              BigInt?
   archiveVerifiedAt         DateTime?
+  rawDisposedAt             DateTime?
+  rawDisposalReceipt        Json?
+  rawArchiveFilesDeletedAt  DateTime?
   operatorResetAt           DateTime?
   operatorResetReason       String?
   operatorResetAbandonedItems Int                              @default(0)

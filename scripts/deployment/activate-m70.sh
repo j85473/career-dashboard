@@ -47,6 +47,8 @@ if [[ ! -f $STAGE/.m70-build-complete ]]; then
  # restricted identity can read JS but cannot execute npm's private binaries.
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build ./node_modules/esbuild/bin/esbuild scripts/deployment/archive-crawls.ts \
    --bundle --packages=external --platform=node --format=esm --outfile=scripts/deployment/crawl-archive.mjs
+ runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build ./node_modules/esbuild/bin/esbuild scripts/deployment/dispose-crawls.ts \
+   --bundle --packages=external --platform=node --format=esm --outfile=scripts/deployment/crawl-disposal.mjs
  touch .m70-build-complete
 fi
 python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity

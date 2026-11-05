@@ -59,7 +59,7 @@ async function assertDatabaseRoundTrip(client: Client, table: string, rows: Arch
   }
 }
 
-export async function loadCrawlArchive(client: Client, batchId: string): Promise<CrawlArchive> {
+export async function loadCrawlArchive(client: Client, batchId: string, retentionDays = 30): Promise<CrawlArchive> {
   if (!uuid.test(batchId)) throw new Error('A batch UUID is required');
   const expression = await jsonExpression(client, 'AtsIngestionBatch');
   const batch = await client.query<{ row: ArchiveRow }>(`SELECT ${expression} AS row FROM "AtsIngestionBatch" t WHERE id=$1 FOR UPDATE`, [batchId]);
@@ -94,7 +94,7 @@ export async function loadCrawlArchive(client: Client, batchId: string): Promise
     }
     archive.tables[table] = rows.sort((a, b) => String(a.id).localeCompare(String(b.id)));
   }
-  verifyCrawlArchive(archive);
+  verifyCrawlArchive(archive, Date.now(), retentionDays);
   await assertDatabaseRoundTrip(client, 'AtsIngestionBatch', [archive.batch]);
   for (const table of CRAWL_ARCHIVE_TABLES) await assertDatabaseRoundTrip(client, table, archive.tables[table]);
   return archive;
@@ -186,7 +186,8 @@ export async function runCrawlArchive(argv: string[]): Promise<void> {
   try {
     if (mode === '--read') {
       if (!requestedId) throw new Error('--read requires a batch UUID');
-      const { rows } = await client.query('SELECT "archiveLocation","archiveContentHash" FROM "AtsIngestionBatch" WHERE id=$1', [requestedId]);
+      const { rows } = await client.query('SELECT "archiveLocation","archiveContentHash","rawDisposedAt" FROM "AtsIngestionBatch" WHERE id=$1', [requestedId]);
+      if (rows[0]?.rawDisposedAt) throw new Error('Raw acquisition data was permanently deleted under the completed-run retention policy; jobs and scores were preserved.');
       const archive = await readCrawlArchive(ARCHIVE_ROOTS, rows[0]?.archiveLocation, rows[0]?.archiveContentHash);
       process.stdout.write(`${JSON.stringify(archive)}\n`);
       return;

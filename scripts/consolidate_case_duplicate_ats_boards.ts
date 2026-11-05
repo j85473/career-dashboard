@@ -114,7 +114,10 @@ async function loadGroups(): Promise<Map<string, VariantRow[]>> {
   const rows = await prisma.$queryRaw<Array<VariantRow & { key: string }>>`
     WITH groups AS (
       SELECT platform, lower(slug) AS key
-        FROM "AtsCompany"
+        FROM "AtsCompany" c
+       WHERE NOT EXISTS (SELECT 1 FROM "AtsIngestionBatch" b
+         WHERE b.platform=c.platform AND lower(b.slug)=lower(c.slug)
+           AND (b."archiveVerifiedAt" IS NOT NULL OR b."rawDisposedAt" IS NOT NULL))
        GROUP BY 1, 2
       HAVING count(*) > 1
     )

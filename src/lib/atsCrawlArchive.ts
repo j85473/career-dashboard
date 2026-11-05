@@ -25,12 +25,13 @@ const liveLease = (row: ArchiveRow, token: string, expiry: string, now: number) 
 
 /** Reproduce the source and handoff evidence before any database removal.
  * Completed status alone, a checksum alone, or item terminalization is insufficient. */
-export function verifyCrawlArchive(archive: CrawlArchive, now = Date.now()): Record<string, number> {
+export function verifyCrawlArchive(archive: CrawlArchive, now = Date.now(), retentionDays = CRAWL_ARCHIVE_RETENTION_DAYS): Record<string, number> {
+  check(retentionDays === 1 || retentionDays === 30, 'invalid retention policy');
   const b = archive.batch;
   check(archive.version === 1 && b && /^[0-9a-f-]{36}$/.test(String(b.id)), 'invalid archive identity');
   check(b.writerMode === 'v2' && b.ledgerVersion === 2 && b.status === 'processed'
     && b.acquisitionPhase === 'synchronized' && b.operatorResetAt === null && b.archiveVerifiedAt === null
-    && timestamp(b.processedAt) <= now - CRAWL_ARCHIVE_RETENTION_DAYS * 86400000
+    && !b.rawDisposedAt && timestamp(b.processedAt) <= now - retentionDays * 86400000
     && Number.isFinite(timestamp(b.listingCompletedAt)) && Number.isFinite(timestamp(b.synchronizedAt)), 'batch is unfinished, reset, archived, or too recent');
   check(!liveLease(b, 'acquisitionClaimToken', 'acquisitionLeaseExpiresAt', now)
     && !liveLease(b, 'leaseToken', 'leaseExpiresAt', now), 'batch lease remains active');
