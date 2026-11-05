@@ -33,7 +33,7 @@ export async function disposeOneCrawl(client: Client, id: string, apply: boolean
     }
     const archive = batch.archiveVerifiedAt
       ? await readCrawlArchive(roots, batch.archiveLocation, batch.archiveContentHash)
-      : await loadCrawlArchive(client, id, 1);
+      : await loadCrawlArchive(client, id, 1, 'disposal');
     if (archive.batch.id !== id || archive.batch.slug !== batch.slug || archive.batch.platform !== batch.platform
       || archive.batch.activeLedgerGeneration !== batch.activeLedgerGeneration
       || archive.batch.rawObservationCount !== batch.rawObservationCount) throw new Error('Archived source does not match its batch');

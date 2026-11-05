@@ -56,9 +56,19 @@ def main():
             'backgroundPaused': prior.get('diskBackgroundPaused', prior.get('backgroundPaused', False)),
             'collectionPaused': prior.get('diskCollectionPaused', prior.get('collectionPaused', False)),
         })
+        host = os.statvfs('/')
+        host_free, host_total = host.f_bavail * host.f_frsize, host.f_blocks * host.f_frsize
+        host_critical, host_paused = pressure(host_free, {
+            'backgroundPaused': prior.get('hostBackgroundPaused', False),
+            'collectionPaused': prior.get('hostCollectionPaused', False),
+        })
+        disk_critical, disk_paused = critical, paused
+        critical, paused = critical or host_critical, paused or host_paused
+        result.update(hostFreeBytes=host_free, hostTotalBytes=host_total,
+                      hostBackgroundPaused=host_critical, hostCollectionPaused=host_paused)
         result.update(freeBytes=free, totalBytes=total, backgroundPaused=critical, collectionPaused=paused,
-                      diskBackgroundPaused=critical, diskCollectionPaused=paused,
-                      level='critical' if critical else 'collection_paused' if paused else 'warning' if free < 40 * GIB else 'normal',
+                      diskBackgroundPaused=disk_critical, diskCollectionPaused=disk_paused,
+                      level='critical' if critical else 'collection_paused' if paused else 'warning' if min(free, host_free) < 40 * GIB else 'normal',
                       message='')
         # A table moved temporarily to another disk can make the NVMe appear
         # recovered before its compacted files have returned. Do not resume

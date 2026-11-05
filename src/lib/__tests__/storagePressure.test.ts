@@ -91,3 +91,12 @@ assert m.pressure(20*m.GIB,{'backgroundPaused':True}) == (False,True)
 `], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
+
+
+test('intake protects the internal SSD as well as the NVMe and verifies both readings', () => {
+  const dual = { ...snapshot, hostFreeBytes: 50 * GIB, hostTotalBytes: 439 * GIB };
+  assert.equal(evaluateStoragePressure(dual, 60 * GIB, 234 * GIB, now, 25 * GIB).collectionPaused, true);
+  assert.equal(evaluateStoragePressure(dual, 60 * GIB, 234 * GIB, now, 14 * GIB).backgroundPaused, true);
+  assert.equal(evaluateStoragePressure(dual, 60 * GIB, 234 * GIB, now, 45 * GIB).collectionPaused, false);
+  assert.equal(evaluateStoragePressure(dual, 60 * GIB, 234 * GIB, now).level, 'unknown');
+});

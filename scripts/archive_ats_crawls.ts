@@ -59,7 +59,7 @@ async function assertDatabaseRoundTrip(client: Client, table: string, rows: Arch
   }
 }
 
-export async function loadCrawlArchive(client: Client, batchId: string, retentionDays = 30): Promise<CrawlArchive> {
+export async function loadCrawlArchive(client: Client, batchId: string, retentionDays = 30, purpose: 'archive' | 'disposal' = 'archive'): Promise<CrawlArchive> {
   if (!uuid.test(batchId)) throw new Error('A batch UUID is required');
   const expression = await jsonExpression(client, 'AtsIngestionBatch');
   const batch = await client.query<{ row: ArchiveRow }>(`SELECT ${expression} AS row FROM "AtsIngestionBatch" t WHERE id=$1 FOR UPDATE`, [batchId]);
@@ -95,8 +95,13 @@ export async function loadCrawlArchive(client: Client, batchId: string, retentio
     archive.tables[table] = rows.sort((a, b) => String(a.id).localeCompare(String(b.id)));
   }
   verifyCrawlArchive(archive, Date.now(), retentionDays);
-  await assertDatabaseRoundTrip(client, 'AtsIngestionBatch', [archive.batch]);
-  for (const table of CRAWL_ARCHIVE_TABLES) await assertDatabaseRoundTrip(client, table, archive.tables[table]);
+  // Archival must reproduce every native value on restoration. Disposal has
+  // no restoration payload: the complete lifecycle, source hashes and handoff
+  // manifests above prove completion without rereading every large value by ID.
+  if (purpose === 'archive') {
+    await assertDatabaseRoundTrip(client, 'AtsIngestionBatch', [archive.batch]);
+    for (const table of CRAWL_ARCHIVE_TABLES) await assertDatabaseRoundTrip(client, table, archive.tables[table]);
+  }
   return archive;
 }
 

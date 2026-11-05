@@ -10,6 +10,8 @@ export type StoragePressure = {
   collectionPaused: boolean;
   backgroundPaused: boolean;
   message: string;
+  hostFreeBytes?: number;
+  hostTotalBytes?: number;
   growthBytesPerDay?: number | null;
   daysToCollectionPause?: number | null;
 };
@@ -20,21 +22,24 @@ export const STORAGE_LIMITS = { warning: 40 * GIB, collection: 30 * GIB, critica
 /** A second, independent read catches a sudden drop between monitor ticks.
  * Missing/stale telemetry fails closed only for unattended work, never cards. */
 export function evaluateStoragePressure(snapshot: StoragePressure | null, freeBytes: number | null,
-  totalBytes: number | null, now = Date.now()): StoragePressure {
+  totalBytes: number | null, now = Date.now(), hostFreeBytes?: number): StoragePressure {
   const unknown = !snapshot || snapshot.version !== 1 || snapshot.level === 'unknown' || !Number.isFinite(Date.parse(snapshot.checkedAt))
     || typeof snapshot.collectionPaused !== 'boolean' || typeof snapshot.backgroundPaused !== 'boolean'
     || now - Date.parse(snapshot.checkedAt) > 90_000 || Date.parse(snapshot.checkedAt) > now + 5_000
     || !Number.isFinite(freeBytes) || freeBytes === null || freeBytes < 0 || totalBytes === null || totalBytes <= 0;
-  if (unknown) return { version: 1, checkedAt: new Date(now).toISOString(), level: 'unknown', freeBytes, totalBytes,
+  const hostUnknown = snapshot?.hostFreeBytes !== undefined
+    && (hostFreeBytes === undefined || !Number.isFinite(hostFreeBytes) || hostFreeBytes < 0);
+  if (unknown || hostUnknown) return { version: 1, checkedAt: new Date(now).toISOString(), level: 'unknown', freeBytes, totalBytes,
     collectionPaused: true, backgroundPaused: true,
     message: 'Background work is paused because database disk capacity cannot be verified. Your saved jobs remain available.' };
   if (snapshot.level === 'maintenance') return { ...snapshot, freeBytes, totalBytes,
     collectionPaused: true, backgroundPaused: true,
     message: 'Background work is paused while completed crawl storage is compacted. Your saved jobs remain available.' };
-  const critical = freeBytes < STORAGE_LIMITS.critical || snapshot.backgroundPaused;
-  const paused = critical || freeBytes < STORAGE_LIMITS.collection || snapshot.collectionPaused;
-  const level = critical ? 'critical' : paused ? 'collection_paused' : freeBytes < STORAGE_LIMITS.warning ? 'warning' : 'normal';
-  return { ...snapshot, level, freeBytes, totalBytes, collectionPaused: paused, backgroundPaused: critical,
+  const available = Math.min(freeBytes!, hostFreeBytes ?? Infinity);
+  const critical = available < STORAGE_LIMITS.critical || snapshot.backgroundPaused;
+  const paused = critical || available < STORAGE_LIMITS.collection || snapshot.collectionPaused;
+  const level = critical ? 'critical' : paused ? 'collection_paused' : available < STORAGE_LIMITS.warning ? 'warning' : 'normal';
+  return { ...snapshot, level, freeBytes, totalBytes, ...(hostFreeBytes === undefined ? {} : { hostFreeBytes }), collectionPaused: paused, backgroundPaused: critical,
     message: critical ? 'Background work is paused to preserve database space. Your saved jobs remain available.'
       : paused ? 'New collection is paused to preserve database space. Saved work can finish; your jobs remain available.'
         : level === 'warning' ? 'Database disk space is low. Collection will pause before the reserve is exhausted.' : '' };
@@ -57,7 +62,9 @@ export function readStoragePressure(): StoragePressure {
     const diskPath = process.env.CAREER_STORAGE_TEST_PATH || '/mnt/nvme';
     if (!process.env.CAREER_STORAGE_TEST_PATH && statSync(diskPath).dev === statSync('/').dev) throw new Error('Database mount is missing');
     const disk = statfsSync(diskPath);
-    value = evaluateStoragePressure(snapshot, disk.bavail * disk.bsize, disk.blocks * disk.bsize, now);
+    const host = snapshot.hostFreeBytes === undefined ? null : statfsSync('/');
+    value = evaluateStoragePressure(snapshot, disk.bavail * disk.bsize, disk.blocks * disk.bsize, now,
+      host ? host.bavail * host.bsize : undefined);
   } catch {
     value = evaluateStoragePressure(null, null, null, now);
   }

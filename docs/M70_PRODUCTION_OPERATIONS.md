@@ -502,7 +502,9 @@ The active retention worker now permanently disposes of redundant acquisition
 payloads instead of producing indefinite archives. A run must be processed and
 synchronized, at least 24 hours past completion, have no reset, processing errors
 or live/unknown leases, and pass the complete page, item, resolution and segment
-verification. The newest completed snapshot for each board is retained for the
+verification. Disposal does not repeat the native-value restoration round trip
+used when creating archives; it still validates source hashes and processing
+manifests before deleting anything. The newest completed snapshot for each board is retained for the
 existing metadata repair tools. Unfinished and unverifiable work stays intact.
 
 Only raw pages, listing observations, ingestion items and their resolutions are
@@ -948,3 +950,29 @@ providers' completed ranges again. In-flight local scans finish first, then
 remaining indexes run newest first. Existing cursors and candidate outcomes
 remain authoritative. The separate web-discovery crawler keeps its existing
 robots policy; Paycor support does not modify that policy.
+
+
+### Acquisition storage across the two internal SSDs (November 5)
+
+The local SATA SSD provides an additional PostgreSQL tablespace named
+`career_acquisition_local`, at `/var/lib/postgresql/career-acquisition-local`.
+It holds the acquisition observation-resolution table (including its indexes)
+and the listing-observation primary-key index. This moves roughly 20 GiB off
+NVMe without rewriting application records or using the slow NAS. The remaining
+acquisition payloads, jobs and scores remain in their existing locations.
+
+The storage monitor and application admission check now protect both the NVMe
+and the host filesystem. Either disk pauses collection below 30 GiB and needs
+40 GiB to clear a pause; either disk pauses background writes below 15 GiB and
+needs 20 GiB to recover. Filesystem free space remains distinct from reusable
+space inside PostgreSQL. Maintenance holds stay active during placement work.
+
+Use PostgreSQL `ALTER TABLE/INDEX ... SET TABLESPACE` for moves, one relation at
+a time, with acquisition writers quiesced, both storage locks held, a short lock
+wait and a bounded statement timeout. PostgreSQL commits each move atomically;
+never relocate or delete relation files by hand. Keep the Dashboard available,
+verify scores and attachments, validate destination and source capacity, then
+clear the hold. The tablespace must be present before PostgreSQL starts.
+Logical backups still contain the records. For recovery on a different layout,
+restore with `pg_restore --no-tablespaces`, or create the named tablespace on an
+appropriate local disk first. Existing backup files are not deleted by this work.
