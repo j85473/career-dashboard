@@ -501,6 +501,9 @@ not 30 days after download. The archive worker requires synchronized lifecycle,
 no operator reset or active leases, complete page and observation hashes,
 terminal items, complete resolutions, and fully processed segments with matching
 manifests and outcome counts. Unfinished or unverifiable work stays online.
+PostgreSQL also compares every proposed archived row against its reconstructed
+native record before removal. A JSON null or unusually precise number that
+would change during serialization leaves the entire batch online for review.
 Batches exceeding the bounded 256 MiB serialized budget stay online for separate
 streaming review; they are reported as held, never silently discarded.
 

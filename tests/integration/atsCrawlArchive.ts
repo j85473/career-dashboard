@@ -41,6 +41,17 @@ try {
     return counts;
   };
   const before = await rawCounts();
+  // Values that a JSON/JavaScript round-trip would change must remain online.
+  for (const metadata of ['null', '{"exact":9007199254740993}']) {
+    await test.query("SET session_replication_role='replica'");
+    await test.query('UPDATE "AtsIngestionBatch" SET metadata=$1::jsonb', [metadata]);
+    await test.query("SET session_replication_role='origin'");
+    await assert.rejects(archiveOneCrawl(test, batchId, true, roots), /cannot round-trip/);
+    assert.deepEqual(await rawCounts(), before);
+  }
+  await test.query("SET session_replication_role='replica'");
+  await test.query('UPDATE "AtsIngestionBatch" SET metadata=(jsonb_populate_record(NULL::"AtsIngestionBatch",$1::jsonb)).metadata', [JSON.stringify(archive.batch)]);
+  await test.query("SET session_replication_role='origin'");
   for (const table of CRAWL_ARCHIVE_DELETE_ORDER) await test.query(`GRANT SELECT,DELETE ON "${table}" TO career_admin`);
   await test.query('GRANT SELECT ON "AtsIngestionBatch" TO career_admin');
   await test.query('SET ROLE career_admin');
@@ -64,7 +75,7 @@ try {
     await insertRows(table, archive.tables[table]);
     for (let offset = 0; offset < archive.tables[table].length; offset += 250) {
       const original = archive.tables[table].slice(offset, offset + 250);
-      const comparison = await test.query(`SELECT count(*)::int AS n, bool_and(to_jsonb(t)=to_jsonb(original)) AS same
+      const comparison = await test.query(`SELECT count(*)::int AS n, bool_and(t IS NOT DISTINCT FROM original) AS same
         FROM jsonb_populate_recordset(NULL::"${table}",$1::jsonb) original JOIN "${table}" t USING(id)`, [JSON.stringify(original)]);
       assert.equal(comparison.rows[0].n, original.length);
       assert.equal(comparison.rows[0].same, true, `Restored ${table} rows differ`);
@@ -72,7 +83,7 @@ try {
   }
   assert.deepEqual(await rawCounts(), before);
   console.log(JSON.stringify({ passed: true, batchId, archivedRows: result.rows,
-    checks: ['application deletion refused', 'failed copy rolled back', 'two complete copies verified', 'scores preserved', 'every archived column restored'] }));
+    checks: ['lossy JSON null/large numbers held', 'application deletion refused', 'failed copy rolled back', 'two complete copies verified', 'scores preserved', 'every archived column restored'] }));
 } finally {
   await source.end(); await test.end(); await rm(directory, { recursive: true, force: true });
 }

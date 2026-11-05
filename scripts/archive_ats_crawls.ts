@@ -42,6 +42,22 @@ async function jsonExpression(client: Client, table: string): Promise<string> {
   return 'to_jsonb(t)' + columns.rows.map(({ attname }) => ` || jsonb_build_object('${attname}',t.${quote(attname)}::text)`).join('');
 }
 
+async function assertDatabaseRoundTrip(client: Client, table: string, rows: ArchiveRow[]): Promise<void> {
+  for (let offset = 0; offset < rows.length; offset += 250) {
+    const part = rows.slice(offset, offset + 250);
+    // Compare native composite values, not to_jsonb(t): that conversion erases
+    // the distinction between SQL NULL and a JSONB literal null. This also
+    // catches JSON numbers that JavaScript cannot represent without rounding.
+    const result = await client.query(`SELECT count(t.id)::int AS matched,
+      count(*) FILTER (WHERE t IS DISTINCT FROM original)::int AS changed
+      FROM jsonb_populate_recordset(NULL::${quote(table)},$1::jsonb) original
+      LEFT JOIN ${quote(table)} t ON t.id=original.id`, [JSON.stringify(part)]);
+    if (result.rows[0].matched !== part.length || result.rows[0].changed !== 0) {
+      throw new Error(`Crawl archive held: ${table} cannot round-trip every native database value; source retained`);
+    }
+  }
+}
+
 export async function loadCrawlArchive(client: Client, batchId: string): Promise<CrawlArchive> {
   if (!uuid.test(batchId)) throw new Error('A batch UUID is required');
   const expression = await jsonExpression(client, 'AtsIngestionBatch');
@@ -71,6 +87,8 @@ export async function loadCrawlArchive(client: Client, batchId: string): Promise
     archive.tables[table] = rows;
   }
   verifyCrawlArchive(archive);
+  await assertDatabaseRoundTrip(client, 'AtsIngestionBatch', [archive.batch]);
+  for (const table of CRAWL_ARCHIVE_TABLES) await assertDatabaseRoundTrip(client, table, archive.tables[table]);
   return archive;
 }
 
