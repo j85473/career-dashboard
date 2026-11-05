@@ -554,6 +554,8 @@ free space separately and compact only the affected crawler tables with enough
 working space; never run an unbudgeted `VACUUM FULL` against the nearly full
 NVMe. The collection pause clears only when physical free space reaches its
 40 GiB recovery threshold.
+All four raw tables use a 2% vacuum threshold and 1% analyze threshold, each
+with a 1,000-row floor, so the daily archive frees reusable space promptly.
 
 For supervised compaction, create the root-owned marker
 `/etc/career-dashboard/storage-maintenance` and refresh the storage monitor.
