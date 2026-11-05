@@ -3,6 +3,7 @@ Description=Archive verified completed crawler evidence after thirty days
 After=postgresql.service
 ConditionPathExists=/etc/career-dashboard/production-enabled
 ConditionPathExists=/etc/career-dashboard/crawl-archive-enabled
+ConditionPathExists=!/etc/career-dashboard/storage-maintenance
 
 [Service]
 Type=oneshot

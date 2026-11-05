@@ -72,8 +72,11 @@ export async function loadCrawlArchive(client: Client, batchId: string): Promise
     const rows: ArchiveRow[] = [];
     // A server cursor scans the batch once. Repeated UUID keyset LIMITs can
     // choose the global primary-key index and repeatedly scan unrelated crawls.
+    // Sorting the JSON in PostgreSQL materializes the entire cold batch before
+    // the first FETCH and can spill large payloads onto the nearly full NVMe.
+    // Stream the batch index, then sort the bounded in-memory rows by identity.
     await client.query(`DECLARE crawl_archive_rows NO SCROLL CURSOR FOR
-      SELECT ${expression} AS row FROM ${quote(table)} t WHERE "batchId"=$1 ORDER BY id`, [batchId]);
+      SELECT ${expression} AS row FROM ${quote(table)} t WHERE "batchId"=$1`, [batchId]);
     try {
       while (true) {
         const result = await client.query<{ row: ArchiveRow }>('FETCH FORWARD 100 FROM crawl_archive_rows');
@@ -89,7 +92,7 @@ export async function loadCrawlArchive(client: Client, batchId: string): Promise
       // the actual held reason with "current transaction is aborted".
       await client.query('CLOSE crawl_archive_rows').catch(() => undefined);
     }
-    archive.tables[table] = rows;
+    archive.tables[table] = rows.sort((a, b) => String(a.id).localeCompare(String(b.id)));
   }
   verifyCrawlArchive(archive);
   await assertDatabaseRoundTrip(client, 'AtsIngestionBatch', [archive.batch]);
