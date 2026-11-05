@@ -31,6 +31,7 @@ import { isAtsBoardInRotationCohort, nextAtsBoardCheckDateForBoard, apiRotationD
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from './atsContinuationCapacity';
 import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
 import { atsListingAdmissionReservationSql, atsSegmentPersistenceCapacitySql } from './atsAdmissionCapacity';
+import { atsPersistenceAllocation } from './atsPersistenceAllocation';
 import { atsEmployerVerificationHoldWhere, isAtsEmployerVerificationHold, type AtsEmployerRetryMode } from './atsEmployerRetry';
 export { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK } from './atsAcquisitionPressure';
 
@@ -2037,6 +2038,7 @@ export async function publishReadyAtsV2Segments(input: {
   now?: Date;
 }): Promise<{ publishedSegments: number; publishedItems: number; remainingJobs: number }> {
   const now = input.now || new Date();
+  const allocation = atsPersistenceAllocation(input.lowWatermark, input.highWatermark);
   const maximum = Math.max(1, Math.min(10, Math.floor(input.maxSegments || 10)));
   return runLedgerTransaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(912837465)`;
@@ -2056,8 +2058,8 @@ export async function publishReadyAtsV2Segments(input: {
       previousBacklogJobs: gate.publicationBacklogJobs,
       initialBacklogJobs,
       finalBacklogJobs: remainingJobs,
-      highWatermark: input.highWatermark,
-      lowWatermark: input.lowWatermark,
+      highWatermark: allocation.publicationHigh,
+      lowWatermark: allocation.publicationLow,
       now,
     });
     let publishedSegments = 0;
@@ -2071,7 +2073,7 @@ export async function publishReadyAtsV2Segments(input: {
         orderBy: [{ sealedAt: 'asc' }, { batchId: 'asc' }, { segmentOrdinal: 'asc' }],
         take: maximum * 25,
       });
-      const selected = selectAtsPublicationSegments(segments, maximum, input.highWatermark - remainingJobs);
+      const selected = selectAtsPublicationSegments(segments, maximum, allocation.publicationHigh - remainingJobs);
       if (selected.length) {
         const published = await transaction.atsIngestionSegment.updateMany({
           where: { id: { in: selected.map(segment => segment.id) }, status: 'sealed', publishedAt: null },
@@ -2097,8 +2099,8 @@ export async function publishReadyAtsV2Segments(input: {
         previousBacklogJobs: gate.publicationBacklogJobs,
         initialBacklogJobs,
         finalBacklogJobs: remainingJobs,
-        highWatermark: input.highWatermark,
-        lowWatermark: input.lowWatermark,
+        highWatermark: allocation.publicationHigh,
+        lowWatermark: allocation.publicationLow,
         now,
       });
     }

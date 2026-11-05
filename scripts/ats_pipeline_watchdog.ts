@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { prisma } from '../src/lib/prisma';
 import { ATS_PIPELINE_CONTROL_FAILURE_SCOPES } from '../src/lib/atsFailureScope';
 import { ATS_PER_BOARD_RATE_LIMIT_PLATFORMS } from '../src/lib/atsUtils';
+import { readAtsFlowSnapshot } from '../src/lib/atsFlowHealth';
 
 const VERSION = 'ats-pipeline-watchdog-v2';
 
@@ -140,6 +141,14 @@ export function acquisitionProgressFinding(input: {
 
 async function collectFindings(): Promise<Finding[]> {
   const findings: Finding[] = [];
+  const flow = await readAtsFlowSnapshot(prisma);
+  for (const source of flow.sources.filter(source => source.stalled)) {
+    findings.push({
+      severity: 'warning', check: 'public_crawler_capacity_starvation', repairable: false,
+      detail: `${source.source}: ${source.capacityWaits} capacity waits and no postings checked in the last 30 minutes; `
+        + 'the operator has not paused collection. Other acquisition progress does not clear this warning.',
+    });
+  }
 
   // 1. The outcome check. Workers burning quanta while nothing completes is the
   //    single signal that caught every failure today, whatever the cause.

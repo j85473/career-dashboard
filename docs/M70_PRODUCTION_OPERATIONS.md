@@ -189,6 +189,42 @@ The remaining legacy API acquisition loop has a separate, explicit
 until the guarded retirement command runs after release verification. It does
 not retire the ADP/public HTTP/browser collectors or rewrite retained work.
 
+### Public crawler capacity and posting outcomes
+
+The API publisher leaves 100 jobs of the existing 2,000-job persistence ceiling
+available for the HTTP and shared-browser public collectors. Public collectors
+check that a full 50-job turn fits under that ceiling; they no longer compete
+with the API publisher for space below its 1,000-job refill threshold. Operator
+pauses, provider limits and the admission gate remain in force.
+
+Stats shows ready handoffs, runnable processing work, retained employer/location
+holds and future retries separately. The per-source view reports postings
+checked and new job records in the past hour. Duplicate and filtered postings
+count as checks. Stats and the watchdog use the same starvation rule: at least
+three capacity waits spanning 15 minutes, no checks in 30 minutes, and a recent
+attempt while collection is enabled. Progress by another ATS does not clear
+that warning. An intentional operator pause does not produce it.
+
+For explicitly authorized recovery of older Oracle/UKG employer holds, run
+`scripts/recover_retained_ats_employers.ts --collect <board-plan.json>` and
+`--collect-postings <posting-plan.json>` under the runtime environment. These
+bounded, resumable passes retain the response bytes and source URLs. Review
+the completed plans, then run `--apply <plan.json> <selectionHash>` using the
+hash printed by collection. Plans are private files and proofs expire after
+eight hours. Apply replays the saved responses through the normal source
+parsers before writing any verified employer rule. Exact-posting proofs stay
+confined to that posting ID, title, URL and board; they are not company aliases
+or board-wide rules. Conflicting existing rules remain unchanged.
+
+Application registers verified evidence and can release at most 200 due items
+within the API publisher's remaining capacity. Segment identity, immutable
+manifest, saved offset, live lease and retry date are rechecked. Future retry
+dates, raw downloads, manifests, cards and scores remain untouched. Reusing a
+plan does not duplicate a release. Unavailable or unverifiable sources stay
+held, and a verified first posting does not establish the employer of every
+other posting in an older multi-posting segment. Verify actual consumer
+progress after application; registered evidence alone is not a processed job.
+
 ### Reconciling the four-day API rotation
 
 Healthy API boards use a four-day calendar rotation in America/Chicago. Browser

@@ -1,7 +1,7 @@
 import type { AtsRetryCode } from './atsRetryReason';
 import { publicAtsBoardUrl, publicAtsBoardSlugFromUrl, parsePublicAtsConfig } from './publicAtsBoards';
 import { oracleCareerSiteUrl, oracleCareerSiteEmployer, publishedEmployerName, resolveUkgBoardEmployer, oracleEmployerWebsiteUrl, employerWebsiteName } from './publicAtsEmployer';
-import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
+import { verifiedAtsBoardEmployer, verifiedAtsPostingEvidence } from './atsEmployerRegistry';
 import { safeExternalFetch } from './safeExternalFetch';
 
 const cache = new Map<string, { expiresAt: number; result: Promise<string> }>();
@@ -10,6 +10,7 @@ const postingCache = new Map<string, { expiresAt: number; result: Promise<AtsPos
 export type AtsEmployerEvidenceDependencies = {
   fetchPage: (url: string) => Promise<Response>;
   registry: typeof verifiedAtsBoardEmployer;
+  useWebsiteCache?: boolean;
 };
 type PublishedPage = { url: string; html: string };
 export type AtsPostingEvidenceResponse = { url: string; response: Response };
@@ -171,7 +172,7 @@ export async function readPublishedAtsBoardEmployer(platform: string, slug: stri
       }
     }
   }
-  if (platform === 'ukg' && !company) company = await resolveUkgBoardEmployer(html, url, dependencies.fetchPage);
+  if (platform === 'ukg' && !company) company = await resolveUkgBoardEmployer(html, url, dependencies.fetchPage, dependencies.useWebsiteCache);
   return company === 'Oracle' && slug.startsWith('eeho.fa.us2.oraclecloud.com::') ? company : publishedEmployerName(company);
 }
 
@@ -190,14 +191,21 @@ export async function recoverPublishedAtsBoardEmployer(platform: string, slug: s
 /** Compatibility recovery for immutable handoffs made before acquisition
  * required a verified employer. New handoffs already carry this evidence. */
 export async function recoverRetainedAtsEmployerEvidence(platform: string, slug: string,
-  job: Record<string, unknown>, recovery = {
+  job: Record<string, unknown>, recovery: {
+    boardEmployer: typeof recoverPublishedAtsBoardEmployer;
+    postingEvidence: typeof recoverPublishedAtsPostingEvidence;
+    storedPostingEvidence?: typeof verifiedAtsPostingEvidence;
+  } = {
     boardEmployer: recoverPublishedAtsBoardEmployer,
     postingEvidence: recoverPublishedAtsPostingEvidence,
+    storedPostingEvidence: verifiedAtsPostingEvidence,
   }): Promise<AtsPostingEmployerEvidence | null> {
   const supplied = typeof job.company === 'string' ? job.company : '';
   if (supplied === 'Oracle' || publishedEmployerName(supplied)) {
     return { company: supplied, description: null, location: null };
   }
+  const stored = await recovery.storedPostingEvidence?.(platform, slug, job);
+  if (stored) return stored;
   const company = await recovery.boardEmployer(platform, slug);
   return company ? { company, description: null, location: null }
     : recovery.postingEvidence(platform, slug, job);

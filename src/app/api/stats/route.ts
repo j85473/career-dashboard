@@ -29,6 +29,7 @@ import {
 import { currentScoreScope } from '@/lib/statsScoringScope';
 import { interviewedJobCountSql } from '@/lib/statsInterviewedJobs';
 import { readIndexerBoardStats } from '@/lib/statsIndexerBoards';
+import { readAtsFlowSnapshot } from '@/lib/atsFlowHealth';
 import { isEnrichmentSubSource } from '@/lib/ingestionSourceKind';
 import { createLatestSuccessfulSnapshot, type SnapshotCacheStatus } from '@/lib/serverSnapshotCache';
 
@@ -132,6 +133,8 @@ async function buildStatsResponse() {
     // awaiting-first-sweep and due-first-sweep populations.
     const snapshotNow = new Date();
     const indexerBoards = readIndexerBoardStats(snapshotNow.getTime());
+    const atsFlow = atsLedgerTelemetryAvailable && ingestionControlAvailable
+      ? await readAtsFlowSnapshot(prisma, snapshotNow) : null;
 
     // Keep this small compatibility read ahead of the large operational
     // fan-out below. Adding it to the nested ATS Promise.all increased the
@@ -1496,6 +1499,7 @@ async function buildStatsResponse() {
         },
       },
       operations: {
+        atsFlow,
         pipeline: pipelineState ? {
           isRunning: pipelineState.isRunning,
           currentStep: pipelineState.currentStep,

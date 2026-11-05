@@ -194,13 +194,13 @@ export function employerWebsiteName(html: string, requestedUrl: string, responde
 
 const websiteNames = new Map<string, { name: string; expiresAt: number }>();
 export async function resolveUkgBoardEmployer(html: string, url: string,
-  fetchPage: (url: string) => Promise<Response>): Promise<string> {
+  fetchPage: (url: string) => Promise<Response>, useCache = true): Promise<string> {
   const branding = ukgBoardBranding(html, url);
   if (branding.company || !branding.employerUrl) return branding.company;
   const cached = websiteNames.get(branding.employerUrl);
-  if (cached && cached.expiresAt > Date.now()) return cached.name;
+  if (useCache && cached && cached.expiresAt > Date.now()) return cached.name;
   const response = await fetchPage(branding.employerUrl);
   const name = response.ok ? employerWebsiteName(await response.text(), branding.employerUrl, response.url || branding.employerUrl) : '';
-  websiteNames.set(branding.employerUrl, { name, expiresAt: Date.now() + (name ? 86400000 : 300000) });
+  if (useCache) websiteNames.set(branding.employerUrl, { name, expiresAt: Date.now() + (name ? 86400000 : 300000) });
   return name;
 }

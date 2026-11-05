@@ -10,6 +10,7 @@ import { readClientMutationResponse } from '@/lib/clientMutationResponse';
 import { BoardReviewPanel } from './BoardReviewPanel';
 import { IndexerBoardsCard } from './IndexerBoardsCard';
 import type { IndexerBoardStats } from '@/lib/statsIndexerBoards';
+import type { AtsFlowSnapshot } from '@/lib/atsFlowHealth';
 
 type TrackingCoverage = 'untracked' | 'partial' | 'tracked';
 
@@ -188,6 +189,7 @@ interface StatsData {
     freshness: Record<string, string | null>;
   };
   operations: {
+    atsFlow?: AtsFlowSnapshot | null;
     pipeline: {
       isRunning: boolean;
       currentStep: string;
@@ -746,6 +748,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
   }
 
   const { operations, outcomes, calibration, inventory } = stats;
+  const atsFlow = operations.atsFlow;
   const generatedAt = stats.asOf.generatedAt;
   const today = outcomes.today;
   const week = outcomes.trailing7Days;
@@ -1031,6 +1034,40 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
             note={`${number(operations.queues.needsJd)} need a description · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
           />
         </div>
+      </section>
+
+      <section className="ops-section" aria-label="ATS posting progress">
+        <SectionHeading eyebrow="Acquisition" title="Are postings moving through"
+          note="Ready postings, retained evidence holds, and actual checks are measured separately. Checked postings include duplicates and filtered results." />
+        {!atsFlow ? <div className="ops-trust-warning">Posting progress is not available in this snapshot.</div> : <>
+          {atsFlow.paused && <div className="ops-trust-warning">Collection is paused by the operator.</div>}
+          <div className="ops-hero-grid">
+            <MetricCard label="Ready for handoff" value={number(atsFlow.readyToPublish)}
+              note={atsFlow.oldestReadyAt ? `oldest ready ${describeAge(atsFlow.oldestReadyAt)}` : 'no ready postings waiting'} />
+            <MetricCard label="Ready for processing" value={number(atsFlow.readyToProcess)}
+              note={`${number(atsFlow.scheduledRetries)} other postings have a future retry date`} />
+            <MetricCard label="Awaiting employer or location proof" value={number(atsFlow.employerHeld)}
+              note={atsFlow.oldestEmployerHoldAt ? `${number(atsFlow.unsealedEmployerHeld)} awaiting details · oldest ${describeAge(atsFlow.oldestEmployerHoldAt)}` : 'no retained evidence holds'}
+              tone={atsFlow.employerHeld ? 'warn' : 'good'} />
+            <MetricCard label="Postings checked in the last hour" value={number(atsFlow.checkedLastHour)}
+              note={`${number(atsFlow.insertedLastHour)} new job records`} />
+          </div>
+          {atsFlow.sources.filter(source => source.stalled).map(source => <div className="ops-trust-warning" role="alert" key={source.source}>
+            <strong>{source.source.replace('ATS-', '')} is waiting for capacity.</strong>{' '}
+            {number(source.capacityWaits)} waits and no postings checked in the last 30 minutes while collection is enabled.
+          </div>)}
+          <details className="ops-details">
+            <summary>Progress by ATS source</summary>
+            <div className="ops-table-scroll"><table className="ops-table">
+              <thead><tr><th>Source</th><th>Collection path</th><th>Checked · 1h</th><th>New · 1h</th><th>Capacity waits · 30m</th><th>Last progress</th></tr></thead>
+              <tbody>{atsFlow.sources.map(source => <tr key={source.source}>
+                <td>{source.source.replace('ATS-', '')}</td><td>{source.lane === 'public' ? 'Public crawler' : 'API'}</td>
+                <td>{number(source.checkedLastHour)}</td><td>{number(source.insertedLastHour)}</td>
+                <td>{number(source.capacityWaits)}</td><td>{source.lastProgressAt ? describeAge(source.lastProgressAt) : 'none in the last hour'}</td>
+              </tr>)}</tbody>
+            </table></div>
+          </details>
+        </>}
       </section>
 
       {/* ── 4. Coverage ──────────────────────────────────────────── */}
