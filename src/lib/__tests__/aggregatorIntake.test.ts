@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { assessAggregatorIntake } from '../aggregatorIntake';
 import { aggregatorIntakeRetryAt, retainAggregatorCandidate, retryAggregatorCandidates } from '../aggregatorIntakeQueue';
 import { Prisma } from '../prismaClient';
@@ -13,6 +14,17 @@ function store(rows: unknown[] = [], known = true, excluded = false) {
   } as never;
 }
 const response = (jobs: unknown[], total = jobs.length) => Response.json({ jobs, meta: { total } });
+
+test('the scheduled retry entrypoint launches under the production CommonJS runner', () => {
+  const child = spawnSync(process.execPath,
+    ['--import', 'tsx', 'scripts/retry_aggregator_intake.ts', '--invalid'],
+    { encoding: 'utf8', timeout: 15_000,
+      env: { ...process.env, DATABASE_URL: 'postgresql://test:test@127.0.0.1:1/test' } });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 1);
+  assert.match(child.stderr, /Usage: retry_aggregator_intake\.ts/);
+  assert.doesNotMatch(child.stderr, /Transform failed|Top-level await/);
+});
 
 test('a saved employer match admits the source without calling its board', async () => {
   const result = await assessAggregatorIntake(job, { store: store([{ id: 'one', title: job.title, company: job.company, source: 'ATS-greenhouse', url: posting.absolute_url, canonicalUrl: posting.absolute_url, location: 'USA', description: 'Employer job description', observations: [] }]),
