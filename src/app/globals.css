@@ -341,7 +341,14 @@ body {
 .job-attachment-remove { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; padding: 0 4px; border: 1px solid var(--border2); border-left: 0; border-radius: 0 7px 7px 0; background: var(--subtle); color: var(--muted); cursor: pointer; }
 .job-attachment-upload:hover, .job-attachment-link:hover, .job-attachment-remove:hover { border-color: var(--accent); }
 .job-attachment-upload:focus-visible, .job-attachment-link:focus-visible, .job-attachment-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.card-location { font-size: 11px; color: var(--muted); }
+.card-location { font-size: 11px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.job-locations { margin-top: 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.job-locations summary { cursor: pointer; }
+.job-locations-toggle { color: var(--accent); }
+.job-locations-list { max-height: min(160px, 25dvh); overflow-y: auto; margin-top: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--subtle); }
+.job-locations-list ul { margin: 0; padding-left: 16px; }
+.job-locations-list li + li { margin-top: 6px; }
+.job-locations summary:focus-visible, .job-locations-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card-age { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; text-align: right; }
 
 .score-bar { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
@@ -403,8 +410,11 @@ body {
   border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,0.02);
   gap: 24px;
+  flex-shrink: 0;
+  max-height: 45dvh;
+  overflow-y: auto;
 }
-.expand-header-left { display: flex; align-items: flex-start; gap: 16px; width: 100%; }
+.expand-header-left { display: flex; align-items: flex-start; gap: 16px; width: 100%; min-width: 0; }
 .expand-logo {
   width: 52px; height: 52px;
   border-radius: 12px;
@@ -458,6 +468,7 @@ body {
 
 .expand-body {
   flex: 1;
+  min-height: 0;
   overflow-y: hidden;
   display: flex;
   flex-direction: row;
@@ -493,6 +504,7 @@ body {
 .expand-desc { font-size: 13px; color: var(--foreground); line-height: 1.8; white-space: pre-wrap; }
 
 .expand-footer {
+  flex-shrink: 0;
   display: flex; gap: 10px; padding: 20px 48px;
   border-top: 1px solid var(--border);
   background: rgba(0,0,0,0.2);
@@ -1164,6 +1176,8 @@ body {
     padding-right: 58px;
     align-items: flex-start;
     flex-shrink: 0;
+    max-height: none;
+    overflow: visible;
   }
   .expand-header-left { gap: 12px; }
   .expand-logo { width: 40px; height: 40px; border-radius: 10px; font-size: 15px; }

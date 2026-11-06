@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { InterviewSchedule } from '@/components/InterviewSchedule';
 import { JobDocuments } from '@/components/JobDocuments';
+import { JobLocations } from '@/components/JobLocations';
 import { Bookmark, CheckCircle, XCircle, ExternalLink, AlertTriangle, Edit2, Loader2, Save, Copy } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
@@ -925,7 +926,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                     <Copy size={12} />
                   </button>
                 </div>
-                <div className="expand-company">{companyLabel} · {job.location || 'Location not provided'}</div>
+                <div className="expand-company">{companyLabel}</div>
+                <JobLocations key={job.location} location={job.location} />
                 {companyLabel !== job.company && (
                   <div style={{ color: 'var(--muted)', fontSize: '12px', marginTop: '4px' }}>
                     Listed employer: {job.company}
@@ -1004,7 +1006,6 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               
 
 
-              <span className="expand-badge meta">{job.location || 'Location not provided'}</span>
               {job.source && job.source.toLowerCase() !== 'careerforce' && (
                 <span 
                   className="expand-badge meta" 

@@ -17,6 +17,7 @@ import { CompanyLogo } from '@/components/CompanyLogo';
 import { InterviewSchedule } from '@/components/InterviewSchedule';
 import { JobDocuments } from '@/components/JobDocuments';
 import { interviewSortKey } from '@/lib/jobInterviewSchedule';
+import { jobLocationPresentation } from '@/lib/jobLocationPresentation';
 
 
 
@@ -279,7 +280,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
       <JobDocuments job={job} onJobUpdate={onJobUpdate} />
 
       <div className="card-footer">
-        <span className="card-location">{job.location || 'Location not provided'}</span>
+        <span className="card-location">{jobLocationPresentation(job.location).summary}</span>
         <span className="card-age">
           <div style={isStale ? { fontWeight: 'bold', color: '#800000' } : {}}>
             {job.source && `${job.source} • `}Posted {job.postedAt ? formatDistanceToNow(new Date(job.postedAt)) : '1d'} ago
