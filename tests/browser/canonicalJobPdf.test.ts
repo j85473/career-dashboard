@@ -6,7 +6,7 @@ import { extractPdfText } from '../../src/lib/pdfText';
 // Run explicitly with an installed Chrome:
 // node --import tsx --test tests/browser/canonicalJobPdf.test.ts
 test('canonical URL redirects, live scripts, and styles render into a source-page PDF', async () => {
-  const requested: string[] = [];
+  const requested = new Set<string>();
   const html = `<!doctype html><html><head><link rel="stylesheet" href="/job.css"></head>
     <body><h1>Channel Sales Manager</h1><div id="posting">Loading…</div><script>
       fetch('/job-data').then(response => response.json()).then(job => {
@@ -15,16 +15,16 @@ test('canonical URL redirects, live scripts, and styles render into a source-pag
     </script></body></html>`;
   const liveText = 'LIVE CANONICAL PAGE. Responsibilities include developing channel partners, working with distributors, planning territory growth, and supporting field sales. '.repeat(8);
   const pdf = await captureCanonicalJobPdf({ sourceUrl: 'https://canonical.example/jobs/42', title: 'Channel Sales Manager' }, async input => {
-    const url = String(input); requested.push(url);
+    const url = String(input); requested.add(url);
     if (url === 'https://canonical.example/jobs/42') return new Response(null, { status: 302, headers: { location: 'https://employer.example/job/42' } });
     if (url.endsWith('/job/42')) return new Response(html, { headers: { 'content-type': 'text/html' } });
     if (url.endsWith('/job.css')) return new Response('body { font: 16px sans-serif; color: #123456; }', { headers: { 'content-type': 'text/css' } });
     if (url.endsWith('/job-data')) return Response.json({ description: liveText });
     return new Response('', { status: 404 });
   });
-  assert.ok(requested.includes('https://canonical.example/jobs/42'));
-  assert.ok(requested.includes('https://employer.example/job-data'));
-  assert.ok(requested.includes('https://employer.example/job.css'));
+  assert.ok(requested.has('https://canonical.example/jobs/42'));
+  assert.ok(requested.has('https://employer.example/job-data'));
+  assert.ok(requested.has('https://employer.example/job.css'));
   const text = await extractPdfText(pdf);
   assert.match(text, /LIVE CANONICAL PAGE/);
   assert.match(text, /Channel Sales Manager/);
