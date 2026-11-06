@@ -18,9 +18,10 @@ import { sameCompanyIdentity } from '../src/lib/companyIdentity';
 import {
   directAtsApplyUrls,
   pagePassedCloudflare,
-  rotatingCandidateIds,
   type BrowserLink,
 } from '../src/lib/himalayasBrowserResolver';
+import { selectCanonicalRecoveryIds } from '../src/lib/canonicalRecoverySelection';
+import { HIMALAYAS_REPAIR_STATUSES } from '../src/lib/himalayasEmployerResolution';
 
 type Options = { apply: boolean; limit: number };
 
@@ -50,18 +51,18 @@ function isHimalayasListing(value: string | null | undefined): boolean {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function readCursor(cursorPath: string): Promise<number> {
+async function readCursor(cursorPath: string): Promise<string | null> {
   try {
-    const value = JSON.parse(await readFile(cursorPath, 'utf8')) as { nextOffset?: unknown };
-    return Number.isInteger(value.nextOffset) && Number(value.nextOffset) >= 0 ? Number(value.nextOffset) : 0;
+    const value = JSON.parse(await readFile(cursorPath, 'utf8')) as { afterId?: unknown };
+    return typeof value.afterId === 'string' ? value.afterId : null;
   } catch {
-    return 0;
+    return null;
   }
 }
 
-async function writeCursor(cursorPath: string, nextOffset: number): Promise<void> {
+async function writeCursor(cursorPath: string, afterId: string | null): Promise<void> {
   const temporary = `${cursorPath}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ nextOffset })}\n`, { encoding: 'utf8', mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify({ afterId })}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, cursorPath);
 }
 
@@ -90,9 +91,10 @@ async function main(): Promise<void> {
   if (!profileDirectory) throw new Error('CLOAKBROWSER_PROFILE_DIR is required');
 
   const indexRows = await prisma.job.findMany({
-    where: { source: { equals: 'Himalayas', mode: 'insensitive' } },
+    where: { source: { equals: 'Himalayas', mode: 'insensitive' },
+      status: { in: HIMALAYAS_REPAIR_STATUSES }, userCanonicalUrl: null },
     select: { id: true, url: true, canonicalUrl: true },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { id: 'asc' },
   });
   const unresolvedIds = indexRows.filter((job) =>
     isHimalayasListing(job.canonicalUrl || job.url)
@@ -100,7 +102,7 @@ async function main(): Promise<void> {
   const cursorPath = process.env.CLOAKBROWSER_CURSOR_PATH
     || path.resolve(profileDirectory, '..', 'canonical-resolver-cursor.json');
   const cursor = await readCursor(cursorPath);
-  const rotation = rotatingCandidateIds(unresolvedIds, cursor, limit);
+  const rotation = selectCanonicalRecoveryIds(unresolvedIds, cursor, limit);
   const rows = await prisma.job.findMany({
     where: { id: { in: rotation.ids } },
     select: {
@@ -145,6 +147,7 @@ async function main(): Promise<void> {
     for (const job of jobs) {
       const sourceUrl = job.canonicalUrl || job.url;
       if (!sourceUrl) continue;
+      if (apply) await writeCursor(cursorPath, job.id);
       try {
         // A protected aggregator page cannot veto a known employer board.
         const knownMatch = await resolveDirectAtsPosting(job, { store: prisma });
@@ -200,7 +203,7 @@ async function main(): Promise<void> {
           continue;
         }
 
-        const plan = planDirectMatchEnrichment(job, match);
+        const plan = planDirectMatchEnrichment(job, { ...match, description: null });
         if (!plan) continue;
         matched += 1;
         console.log(`  ${match.matchedBy || 'title'} match: ${job.company} — ${job.title}`);
@@ -217,7 +220,7 @@ async function main(): Promise<void> {
     await context.close().catch(() => {});
   }
 
-  if (apply) await writeCursor(cursorPath, rotation.nextCursor);
+  if (apply) await writeCursor(cursorPath, rotation.afterId);
 
   console.log(`Rendered: ${rendered}; challenged: ${challenged}; proven matches: ${matched}; written: ${written}; concurrency refusals: ${stale}`);
   if (!apply && matched > 0) console.log('Dry run only. Re-run with --apply after reviewing the proposed destinations.');

@@ -647,7 +647,7 @@ test('incomplete or malformed live search results cannot prove a match', async (
 
 test('shared live cache prevents repeated title searches for the same employer in a bulk pass', async () => {
   let searches = 0;
-  const liveCache = new Map<string, Promise<BoardPosting[]>>();
+  const liveCache = new Map<string, Promise<BoardPosting[] | null>>();
   const fetcher = async (input: string | URL) => {
     const url = new URL(String(input));
     if (url.pathname === '/careers') return new Response(eightfoldConfig);

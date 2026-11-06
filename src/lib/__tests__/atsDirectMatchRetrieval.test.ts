@@ -23,7 +23,7 @@ function row(overrides: Partial<StoredPosting> = {}): StoredPosting {
 }
 
 type Query = { where?: Record<string, unknown>; skip?: number; take?: number;
-  select?: { observations?: { where?: Record<string, unknown> } } };
+  select?: { description?: boolean; observations?: { where?: Record<string, unknown> } } };
 
 // Apply the actual query predicates so a broad stub cannot hide retrieval
 // failures before the canonical-employer comparison gets to see a row.
@@ -58,6 +58,7 @@ function storedStore(records: StoredPosting[], rules: EmployerRule[] = []) {
       const found = records.filter(record => matches(record as unknown as Record<string, unknown>, query.where));
       return found.slice(query.skip || 0, (query.skip || 0) + (query.take || found.length)).map(record => ({
         ...record,
+        ...(query.select?.description === false ? { description: null } : {}),
         observations: record.observations.filter(observation => matches(observation, query.select?.observations?.where)),
       }));
     } },
@@ -197,6 +198,98 @@ test('broad retrieval discards unrelated rows before normalizing or retaining de
   const found = await findStoredAtsPostings('Acme', fixture.store);
   assert.deepEqual(found.postings.map(posting => posting.url), [row().url]);
   assert.equal(fixture.queries.length, 3);
+});
+
+test('targeted recovery scans past more than 32 MiB of unrelated employer descriptions', async () => {
+  const records = Array.from({ length: 1_201 }, (_, index) => row({
+    id: String(index).padStart(5, '0'), title: index === 1_200 ? 'Target Account Manager' : `Unrelated Role ${index}`,
+    description: 'Unrelated duties and qualifications. '.repeat(500),
+    url: `https://job-boards.greenhouse.io/acme/jobs/${index + 100_000}`,
+  }));
+  const job = { title: 'Target Account Manager', company: 'Acme', location: 'USA', source: 'JSearch' };
+  const fixture = storedStore(records);
+  const found = await findStoredAtsPostings('Acme', fixture.store, [job]);
+  assert.equal(found.postings.length, 1);
+  assert.equal(selectDirectAtsMatch(job, found.postings)?.url, records.at(-1)!.url);
+  assert.equal(fixture.queries.length, 4, 'every page participates in the decision');
+  records.push(row({ id: '99999', title: job.title, url: 'https://job-boards.greenhouse.io/acme/jobs/999999' }));
+  assert.equal(await resolveDirectAtsPosting(job, { store: storedStore(records).store, allowLivePing: false }), null,
+    'a rival on the final page still blocks the match');
+});
+
+test('targeted retrieval preserves description-only matches and every employer board', async () => {
+  const description = 'Account Manager: unique duties and requirements for this specific opening. '.repeat(50);
+  const job = { title: 'Renamed publisher title', company: 'Acme', location: 'USA', source: 'JSearch', description };
+  const fixture = storedStore([row({ description }), row({ id: 'other-board', title: 'Unrelated role',
+    url: 'https://job-boards.greenhouse.io/acmeus/jobs/999999' })]);
+  const result = await findStoredAtsPostings('Acme', fixture.store, [job]);
+  assert.equal(result.postings.length, 1);
+  assert.equal(result.boards.length, 2, 'discarding an unrelated job must not discard its board');
+  assert.ok(selectDirectAtsMatch(job, result.postings));
+});
+
+test('Oracle career-site aliases identify one requisition without crossing tenants', () => {
+  const first = row({ url: 'https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/39711' });
+  const aliases = [first, row({ url: first.url.replace('/CX/', '/CX_1/') }),
+    row({ url: first.url.replace('/en/', '/es/').replace('/CX/', '/CX_2/') + '/' })];
+  assert.equal(selectDirectAtsMatch({ title: first.title, location: 'USA' }, aliases)?.url, first.url);
+  for (const other of [first.url.replace('39711', '39712'), first.url.replace('acme.fa.', 'acme-test.fa.')]) {
+    assert.equal(selectDirectAtsMatch({ title: first.title, location: 'USA' }, [...aliases, row({ url: other })]), null);
+  }
+});
+
+test('an exact original posting URL prevents substitution of a newer same-title requisition', () => {
+  const original = 'https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobsearch/job/338307';
+  const newer = row({ url: original.replace('338307', '347403'), description: 'Newer vacancy.' });
+  const job = { title: newer.title, location: 'USA', description: `Title: Account Manager\n\nURL Source: ${original}\n\nOriginal posting text.` };
+  assert.equal(selectDirectAtsMatch(job, [newer]), null);
+  const same = row({ url: original.replace('/en/sites/jobsearch/', '/en-US/sites/CX_1/') });
+  assert.equal(selectDirectAtsMatch(job, [newer, same])?.url, same.url);
+  assert.equal(selectDirectAtsMatch(job, [same, row({ url: original.replace('eeho.', 'eeho-test.') })])?.url, same.url);
+  assert.equal(selectDirectAtsMatch({ ...job, description: `${job.description}\nURL Source: ${newer.url}` }, [same, newer]), null);
+  assert.equal(selectDirectAtsMatch({ ...job, location: 'Canada' }, [same]), null);
+});
+
+test('scoped catalogue retrieval preserves original-URL evidence while excluding a newer sibling', async () => {
+  const original = row({ url: 'https://job-boards.greenhouse.io/acme/jobs/123456' });
+  const newer = row({ id: 'newer', url: original.url.replace('123456', '765432') });
+  const job = { title: original.title, company: 'Acme', location: 'USA',
+    description: `URL Source: ${original.url}` };
+  const fixture = storedStore([original, newer]);
+  const catalogue = await findStoredAtsPostings('Acme', fixture.store, [job], { linksOnly: true });
+  assert.deepEqual(catalogue.postings.map(posting => posting.url), [original.url]);
+  assert.equal(selectDirectAtsMatch(job, catalogue.postings)?.url, original.url);
+});
+
+test('an explicit employer requisition disambiguates a reprint with a publisher footer', () => {
+  const job = { title: 'Partner Development Manager', location: 'Unknown Location',
+    description: 'Req ID: 27-0496\nEmployer duties.\nPublisher application instructions.' };
+  const first = row({ title: job.title, description: 'Req ID: 27-0496\nEmployer duties.', location: 'Spain' });
+  const other = row({ title: job.title, description: 'Req ID: 27-0100\nEmployer duties.',
+    location: 'United States', url: first.url.replace('123456', '765432') });
+  assert.equal(selectDirectAtsMatch(job, [first, other])?.url, first.url);
+  assert.equal(selectDirectAtsMatch({ ...job, location: 'Minneapolis, MN' }, [first, other]), null);
+  assert.equal(selectDirectAtsMatch(job, [other]), null, 'a conflicting requisition cannot win by title');
+  assert.equal(selectDirectAtsMatch(job, [first, { ...first, url: other.url }]), null);
+  assert.equal(selectDirectAtsMatch({ ...job, title: 'Publisher renamed role' }, [first, other])?.url, first.url);
+});
+
+test('a metro label preserves an explicit matching city without equating nearby cities', () => {
+  const posting = row({ location: 'Twin Cities - Roseville, MN 55113' });
+  assert.equal(selectDirectAtsMatch({ title: posting.title, location: 'Roseville, Ramsey County' }, [posting])?.url, posting.url);
+  assert.equal(selectDirectAtsMatch({ title: posting.title, location: 'Minneapolis, MN' }, [posting]), null);
+  assert.equal(selectDirectAtsMatch({ title: posting.title, location: 'Roseville, CA' }, [posting]), null);
+});
+
+test('link-only recovery avoids loading irrelevant bodies for short summaries', async () => {
+  const job = { title: 'Account Manager', company: 'Acme', location: 'USA', description: 'A short summary.' };
+  const fixture = storedStore([row({ description: 'A full employer description.' })]);
+  const result = await findStoredAtsPostings('Acme', fixture.store, [job], { linksOnly: true });
+  assert.equal(fixture.queries[0].select?.description, false);
+  assert.ok(selectDirectAtsMatch(job, result.postings));
+  const requisition = storedStore([row({ description: 'Req ID: 27-0496\nEmployer duties.' })]);
+  await findStoredAtsPostings('Acme', requisition.store, [{ ...job, description: 'Req ID: 27-0496' }], { linksOnly: true });
+  assert.equal(requisition.queries[0].select?.description, true);
 });
 
 const workday = 'https://acme.wd5.myworkdayjobs.com/en-US/External/job/USA-Remote/Account-Manager_R12345';

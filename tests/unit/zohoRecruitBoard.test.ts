@@ -134,7 +134,7 @@ test('the aggregator worker fetches the known Zoho board and enriches only links
   await applyDirectMatchEnrichment('aggregator-job', stamp, enrichment, {
     job: { updateMany: async (args: unknown) => { written = args; return { count: 1 }; } },
   } as unknown as Parameters<typeof applyDirectMatchEnrichment>[3]);
-  assert.deepEqual(written, { where: { id: 'aggregator-job', updatedAt: stamp }, data: enrichment });
+  assert.deepEqual(written, { where: { id: 'aggregator-job', updatedAt: stamp, userCanonicalUrl: null }, data: enrichment });
 });
 
 test('Zoho live matching refuses ambiguous titles, closed jobs and malformed feeds', async () => {

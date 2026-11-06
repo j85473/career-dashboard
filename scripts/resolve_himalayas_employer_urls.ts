@@ -6,7 +6,7 @@ import { getHimalayasCompanyDetails } from '../src/lib/himalayasMcp';
 import { HIMALAYAS_REPAIR_STATUSES, applyHimalayasLinkRepair, himalayasCompanySlug,
   selectHimalayasEmployerPosting, type HimalayasRepairJob } from '../src/lib/himalayasEmployerResolution';
 import { isPermanentAtsBoardRetirement, recordDiscoveredAtsBoard } from '../src/lib/atsBoardDiscovery';
-import { rotatingCandidateIds } from '../src/lib/himalayasBrowserResolver';
+import { selectCanonicalRecoveryIds } from '../src/lib/canonicalRecoverySelection';
 
 function options(argv: string[]) {
   let apply = false;
@@ -49,7 +49,7 @@ async function persistDiscovery(employerKey: string, companyName: string, websit
 async function main() {
   const { apply, limit, companySlug } = options(process.argv.slice(2));
   const rows = await prisma.job.findMany({
-    where: { source: { equals: 'Himalayas', mode: 'insensitive' }, status: { in: HIMALAYAS_REPAIR_STATUSES } },
+    where: { source: { equals: 'Himalayas', mode: 'insensitive' }, status: { in: HIMALAYAS_REPAIR_STATUSES }, userCanonicalUrl: null },
     select: { id: true, title: true, company: true, location: true, description: true,
       url: true, canonicalUrl: true, source: true, status: true, updatedAt: true },
     orderBy: { id: 'asc' },
@@ -64,16 +64,20 @@ async function main() {
   }
   const cursorPath = process.env.EMPLOYER_RESOLVER_CURSOR_PATH
     || '/var/lib/career-dashboard/data/runtime/employer-resolver-cursor.json';
-  let cursor = 0;
+  let afterId: string | null = null;
   try {
     const parsed = JSON.parse(await readFile(cursorPath, 'utf8'));
-    if (Number.isInteger(parsed.nextOffset) && parsed.nextOffset >= 0) cursor = parsed.nextOffset;
+    if (typeof parsed.afterId === 'string') afterId = parsed.afterId;
   } catch { /* first run */ }
-  const rotation = rotatingCandidateIds([...groups.keys()].sort(), companySlug ? 0 : cursor, limit);
+  const rotation = selectCanonicalRecoveryIds([...groups.keys()], companySlug ? null : afterId, limit);
   console.log(`${apply ? 'APPLY' : 'DRY RUN'} — checking ${rotation.ids.length} of ${groups.size} unresolved Himalayas employers; link repairs only`);
   let matched = 0;
   let repaired = 0;
   for (const slug of rotation.ids) {
+    if (apply && !companySlug) {
+      await writeFile(`${cursorPath}.tmp`, `${JSON.stringify({ afterId: slug })}\n`, { mode: 0o600 });
+      await rename(`${cursorPath}.tmp`, cursorPath);
+    }
     try {
       const group = groups.get(slug)!;
       const employerKey = `himalayas:${slug}`;
@@ -111,7 +115,7 @@ async function main() {
     }
   }
   if (apply && !companySlug) {
-    await writeFile(`${cursorPath}.tmp`, `${JSON.stringify({ nextOffset: rotation.nextCursor })}\n`, { mode: 0o600 });
+    await writeFile(`${cursorPath}.tmp`, `${JSON.stringify({ afterId: rotation.afterId })}\n`, { mode: 0o600 });
     await rename(`${cursorPath}.tmp`, cursorPath);
   }
   console.log(`Proven matches: ${matched}; links repaired: ${repaired}. Scores, descriptions, and card decisions preserved.`);

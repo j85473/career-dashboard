@@ -31,7 +31,7 @@ test('an applied card receives only a link repair, with concurrent edits protect
   const store = { job: { updateMany: async (query: unknown) => { writes.push(query); return { count: 1 }; } } } as unknown as Parameters<typeof applyHimalayasLinkRepair>[2];
   assert.equal(await applyHimalayasLinkRepair(job, [posting], store), true);
   assert.deepEqual(writes, [{
-    where: { id: job.id, updatedAt: job.updatedAt, source: { equals: 'Himalayas', mode: 'insensitive' },
+    where: { id: job.id, updatedAt: job.updatedAt, userCanonicalUrl: null, source: { equals: 'Himalayas', mode: 'insensitive' },
       status: { in: ['inbox', 'pending_af', 'needs_jd', 'bookmarked', 'applied', 'interviewing'] }, url: job.url, canonicalUrl: null },
     data: { url: posting.url, canonicalUrl: posting.url },
   }]);

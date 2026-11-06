@@ -50,6 +50,7 @@ function domesticPlace(value: string): { city: string; state: string | null } {
     .replace(/^(?:united states(?: of america)?|u\.?s\.?a?\.?)\s*[-,]\s*/i, '')
     .replace(/\b(?:united states(?: of america)?|u\.?s\.?a?)\s*$/i, '')
     .replace(/^(?:remote|hybrid|on[- ]?site)\s*[-,:]?\s*/i, '')
+    .replace(/^twin cities\s*[-:]\s*/i, '')
     .replace(/\s*[, -]?\s*(?:remote|hybrid|on[- ]?site)$/i, '')
     .replace(/[\s,]+$/, '');
   const stateOnly = clean.toLowerCase();

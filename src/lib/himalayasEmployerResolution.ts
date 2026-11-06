@@ -34,7 +34,7 @@ export async function applyHimalayasLinkRepair(
   const match = selectHimalayasEmployerPosting(job, postings);
   if (!match) return false;
   const result = await store.job.updateMany({
-    where: { id: job.id, updatedAt: job.updatedAt,
+    where: { id: job.id, updatedAt: job.updatedAt, userCanonicalUrl: null,
       source: { equals: 'Himalayas', mode: 'insensitive' }, status: { in: HIMALAYAS_REPAIR_STATUSES },
       url: job.url, canonicalUrl: job.canonicalUrl,
     },

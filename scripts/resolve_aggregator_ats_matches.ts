@@ -5,16 +5,13 @@ import { readFile, rename, writeFile } from 'node:fs/promises';
 import { buildEmployerRuleIndex, employerAliasKey, resolveEmployer } from '../src/lib/employerIdentity';
 import {
   applyDirectMatchEnrichment,
-  boardIdentityFromUrl,
   isDirectPostingUrl,
   findStoredAtsPostings,
   isAggregatorSource,
-  fetchBoardPostings,
   planDirectMatchEnrichment,
-  selectDirectAtsMatch,
+  resolveDirectAtsPostingFromCatalogue,
   type BoardPosting,
 } from '../src/lib/atsDirectMatch';
-import { safeExternalFetch } from '../src/lib/safeExternalFetch';
 import { rotatingCandidateIds } from '../src/lib/himalayasBrowserResolver';
 import { canonicalRecoveryCheckpoint, selectCanonicalRecoveryIds } from '../src/lib/canonicalRecoverySelection';
 
@@ -39,7 +36,7 @@ import { canonicalRecoveryCheckpoint, selectCanonicalRecoveryIds } from '../src/
  */
 
 type Options = { apply: boolean; linksOnly: boolean; activeOnly: boolean; storedOnly: boolean; limit: number | null; maxJobs?: number;
-  jobId?: string; company?: string; cursorPath?: string };
+  jobId?: string; company?: string; cursorPath?: string; reportPath?: string };
 
 function parseArguments(argv: string[]): Options {
   const options: Options = { apply: false, linksOnly: false, activeOnly: false, storedOnly: false, limit: null };
@@ -60,6 +57,10 @@ function parseArguments(argv: string[]): Options {
       options.cursorPath = argument.slice('--cursor-path='.length).trim();
       if (!options.cursorPath) throw new Error('--cursor-path requires a nonempty path');
     }
+    else if (argument.startsWith('--report-path=')) {
+      options.reportPath = argument.slice('--report-path='.length).trim();
+      if (!options.reportPath) throw new Error('--report-path requires a nonempty path');
+    }
     else if (argument.startsWith('--max-jobs=')) {
       const value = Number(argument.slice('--max-jobs='.length));
       if (!Number.isInteger(value) || value <= 0) throw new Error(`Invalid --max-jobs: ${argument}`);
@@ -70,7 +71,7 @@ function parseArguments(argv: string[]): Options {
       if (!Number.isInteger(value) || value <= 0) throw new Error(`Invalid --limit: ${argument}`);
       options.limit = value;
     } else {
-      throw new Error('Usage: resolve_aggregator_ats_matches.ts [--apply] [--links-only] [--active-only] [--stored-only] [--limit=N] [--max-jobs=N] [--job-id=UUID] [--company=NAME] [--cursor-path=PATH]');
+      throw new Error('Usage: resolve_aggregator_ats_matches.ts [--apply] [--links-only] [--active-only] [--stored-only] [--limit=N] [--max-jobs=N] [--job-id=UUID] [--company=NAME] [--cursor-path=PATH] [--report-path=PATH]');
     }
   }
   if (options.maxJobs && options.limit !== null) throw new Error('Choose either --max-jobs or the company --limit');
@@ -80,7 +81,8 @@ function parseArguments(argv: string[]): Options {
 const BOARD_TIMEOUT_MS = 15_000;
 
 async function main(): Promise<void> {
-  const { apply, linksOnly, activeOnly, storedOnly, limit, maxJobs, jobId, company, cursorPath } = parseArguments(process.argv.slice(2));
+  const startedAt = new Date();
+  const { apply, linksOnly, activeOnly, storedOnly, limit, maxJobs, jobId, company, cursorPath, reportPath } = parseArguments(process.argv.slice(2));
   const rules = await prisma.companyNameRule.findMany();
   const index = buildEmployerRuleIndex(rules);
   const companyKey = (name: string) => employerAliasKey(resolveEmployer({ company: name }, index));
@@ -88,7 +90,7 @@ async function main(): Promise<void> {
   if (linksOnly) console.log('  --links-only: apply links only, descriptions left untouched.');
 
   const jobs = await prisma.job.findMany({
-    where: { NOT: { source: { startsWith: 'ATS-' } }, source: { not: null },
+    where: { NOT: { source: { startsWith: 'ATS-' } }, source: { not: null }, userCanonicalUrl: null,
       ...(jobId ? { id: jobId } : {}),
       ...(activeOnly ? { status: { in: ['inbox', 'pending_af', 'bookmarked', 'applied', 'interviewing'] } } : {}),
     },
@@ -121,7 +123,10 @@ async function main(): Promise<void> {
   if (storedOnly) console.log('  Stored catalogue only; no network requests.');
 
   let boardsKnown = 0;
-  let boardsFetched = 0;
+  const liveCache = new Map<string, Promise<BoardPosting[] | null>>();
+  const outcomes: Record<string, number> = {};
+  const attempts: Array<{ jobId: string; company: string; source: string | null; outcome: string;
+    fromUrl?: string | null; toUrl?: string; applied?: boolean; error?: string }> = [];
   let matchedStored = 0;
   let matchedLive = 0;
   let written = 0;
@@ -167,43 +172,33 @@ async function main(): Promise<void> {
 
     try {
 
-      const { postings: stored, board } = await findStoredAtsPostings(group[0].company, prisma);
-      if (!board && stored.length === 0) continue;
-      boardsKnown += 1;
+      const catalogue = await findStoredAtsPostings(group[0].company, prisma, group, { linksOnly });
+      if (catalogue.boards.length) boardsKnown += 1;
+      if (!catalogue.boards.length && catalogue.postings.length === 0) {
+        for (const job of group) attempts.push({ jobId: job.id, company: job.company, source: job.source,
+          outcome: 'no_stored_match_or_known_board' });
+        continue;
+      }
 
-      // Ask a known board only for jobs missing from the stored catalogue.
-      const liveByTitle = new Map<string, BoardPosting[]>();
       for (const job of group) {
-        let match = selectDirectAtsMatch(job, stored);
-        let via: 'stored' | 'live' = 'stored';
-        if (!match) {
-          if (storedOnly || !board) continue;
-          const liveKey = board.platform === 'eightfold' ? job.title : '*';
-          let live = liveByTitle.get(liveKey);
-          if (!live) {
-            live = await fetchBoardPostings(board, safeExternalFetch, BOARD_TIMEOUT_MS,
-              { title: job.title, company: resolveEmployer({ company: job.company }, index) });
-            liveByTitle.set(liveKey, live);
-            boardsFetched += 1;
-          }
-          match = selectDirectAtsMatch(job, live);
-          via = 'live';
-        }
+        const attempt = { jobId: job.id, company: job.company, source: job.source, outcome: 'lookup_inconclusive',
+          fromUrl: job.url } as (typeof attempts)[number];
+        attempts.push(attempt);
+        const match = await resolveDirectAtsPostingFromCatalogue(job, catalogue, {
+          store: prisma, allowLivePing: !storedOnly, timeoutMs: BOARD_TIMEOUT_MS, liveCache,
+          onOutcome: outcome => { attempt.outcome = outcome; },
+        });
         if (!match) continue;
+        const via = match.matchedVia;
         if (via === 'stored') matchedStored += 1;
         else matchedLive += 1;
 
-        const identity = boardIdentityFromUrl(match.url) || board;
         const plan = planDirectMatchEnrichment(job, {
-          url: match.url,
+          ...match,
           description: linksOnly ? null : match.description,
-          platform: identity?.platform || 'unknown',
-          slug: identity?.slug || '',
-          matchedVia: via,
-          postingTitle: match.title,
-          postingLocation: match.location,
         });
         if (!plan) continue;
+        attempt.toUrl = plan.url;
 
         rows.push(
           `    ${job.status.padEnd(12)}${String(job.source).slice(0, 10).padEnd(12)}`
@@ -214,23 +209,37 @@ async function main(): Promise<void> {
 
         if (apply) {
           const ok = await applyDirectMatchEnrichment(job.id, job.updatedAt, plan, prisma);
+          attempt.applied = ok;
           if (ok) written += 1;
           else refused += 1;
         }
       }
     } catch (error: unknown) {
       failedCompanies += 1;
+      for (const job of group.filter(job => !attempts.some(attempt => attempt.jobId === job.id))) {
+        attempts.push({ jobId: job.id, company: job.company, source: job.source, outcome: 'lookup_inconclusive',
+          error: error instanceof Error ? error.message : String(error) });
+      }
       console.error(`Employer lookup deferred for ${group[0].company}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   await saveCursor(maxJobs ? { afterId: rotation.afterId } : { nextOffset: 'nextCursor' in rotation ? rotation.nextCursor : 0 });
+  for (const attempt of attempts) outcomes[attempt.outcome] = (outcomes[attempt.outcome] || 0) + 1;
 
   console.log(`  companies whose board we can identify: ${boardsKnown.toLocaleString()}`);
-  console.log(`  boards pinged live:                    ${boardsFetched.toLocaleString()}`);
+  console.log(`  live employer lookups:                 ${liveCache.size.toLocaleString()}`);
   console.log(`  matched from stored ATS postings:      ${matchedStored.toLocaleString()}`);
   console.log(`  matched from a live board ping:        ${matchedLive.toLocaleString()}\n`);
   if (failedCompanies) console.log(`  employer lookups deferred to the next rotation: ${failedCompanies}`);
+  console.log(`  outcomes: ${JSON.stringify(outcomes)}`);
+  const destination = reportPath || (apply && cursorPath ? `${cursorPath}.report.json` : null);
+  if (destination) {
+    await writeFile(`${destination}.tmp`, `${JSON.stringify({ startedAt, finishedAt: new Date(), apply,
+      storedOnly, linksOnly, unresolved: candidates.length, outcomes, written, refused, attempts }, null, 2)}\n`, { mode: 0o600 });
+    await rename(`${destination}.tmp`, destination);
+    console.log(`  recovery report saved: ${destination}`);
+  }
 
   if (rows.length === 0) {
     console.log('    (nothing to resolve)');

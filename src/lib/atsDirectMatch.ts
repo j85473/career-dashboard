@@ -1,4 +1,5 @@
-import { browserAtsBoardFromUrl } from './browserAtsBoards';
+import { browserAtsBoardFromUrl, isBrowserAtsPlatform } from './browserAtsBoards';
+import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl } from './publicAtsBoards';
 import { tenantAtsIdentityFromUrl } from './tenantAtsBoards';
 import { recruiteePostingLocation } from './recruiteeLocation';
 /**
@@ -52,7 +53,7 @@ import { eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl,
 import { workdayBoardSlugFromJobUrl } from './atsBoardYield';
 import { reserveProviderBudgetForSource } from './ingestionControl';
 import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardRequest, parseZohoRecruitListing } from './zohoRecruitBoard';
-import { fetchEmployerBoardPostings } from './employerBoardPostings';
+import { fetchEmployerBoardPostings, supportsEmployerBoardLookup } from './employerBoardPostings';
 
 export { locationsCompatibleForDirectMatch } from './directMatchLocation';
 
@@ -65,6 +66,15 @@ export type BoardPosting = {
   description: string | null;
 };
 
+export type DirectMatchJob = {
+  title: string; company: string; location?: string | null; description?: string | null;
+  url?: string | null; canonicalUrl?: string | null; source?: string | null;
+};
+
+export type StoredAtsCatalogue = {
+  postings: BoardPosting[]; board: BoardIdentity | null; boards: BoardIdentity[];
+};
+
 export type DirectAtsMatch = {
   url: string;
   description: string | null;
@@ -73,7 +83,7 @@ export type DirectAtsMatch = {
   /** Whether the posting came from what we already stored or from a live ping. */
   matchedVia: 'stored' | 'live';
   /** The exact posting title is preferred; a unique substantial-body match is the fallback. */
-  matchedBy?: 'title' | 'description';
+  matchedBy?: 'title' | 'description' | 'requisition' | 'source_url';
   postingTitle: string;
   postingLocation: string | null;
 };
@@ -117,8 +127,16 @@ export function boardIdentityFromUrl(url: string | null | undefined): BoardIdent
     return null;
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) return null;
-  const paycor = browserAtsBoardFromUrl('paycor', value);
-  if (paycor) return { platform: 'paycor', slug: paycor };
+  const label = identifyAts({ url: value }).toLowerCase().replace(/\s/g, '');
+  const platform = label === 'oraclecloud' ? 'oracle' : label === 'symphonytalent' ? 'symphony' : label;
+  if (isBrowserAtsPlatform(platform)) {
+    const slug = browserAtsBoardFromUrl(platform, value);
+    if (slug) return { platform, slug };
+  }
+  if (isPublicAtsPlatform(platform)) {
+    const slug = publicAtsBoardSlugFromUrl(value, platform);
+    if (slug) return { platform, slug };
+  }
   const tenant = tenantAtsIdentityFromUrl(value);
   if (tenant) return tenant;
   const zoho = zohoRecruitBoardSlugFromUrl(value);
@@ -168,6 +186,26 @@ export function titleLocationSuffix(title: string | null | undefined): string | 
   return null;
 }
 
+export function directAtsTitleKey(value: string): string {
+  return normalizeTitle(cleanHtmlText(value)
+    .replace(/\s*[,|–—-]\s*(?:remote job|now hiring)\s*$/i, ''))
+    .replace(/\bsr\b/g, 'senior').replace(/\bmgr\b/g, 'manager');
+}
+
+/** An explicitly labelled employer requisition, never an aggregator's URL ID. */
+export function declaredRequisitionId(description: string | null | undefined): string | null {
+  const ids = new Set([...cleanHtmlText(String(description || '')).matchAll(
+    /^\s*(?:req(?:uisition)?\s*(?:id|number|no\.?|#)|job requisition id)\s*[:#]?\s*([a-z0-9][a-z0-9_-]{3,39})(?=\s|$)/gim,
+  )].map(match => match[1].toLowerCase()).filter(id => /\d/.test(id)));
+  return ids.size === 1 ? [...ids][0] : null;
+}
+
+/** Exact source metadata retained by a scraper, not an arbitrary body link. */
+function declaredSourcePostingKeys(description: string | null | undefined): Set<string> {
+  return new Set([...String(description || '').matchAll(/^\s*URL Source:\s*(https?:\/\/\S+)\s*$/gim)]
+    .map(match => match[1]).filter(isDirectPostingUrl).map(url => directAtsPostingKey({ url })));
+}
+
 /**
  * Picks the one posting that is unambiguously this job. Pure, so the decision
  * is testable without a network or a database.
@@ -176,9 +214,7 @@ export function selectDirectAtsMatch(
   job: { title: string; location?: string | null; description?: string | null; source?: string | null; canonicalUrl?: string | null },
   postings: readonly BoardPosting[],
 ): BoardPosting | null {
-  const titleKey = (value: string) => normalizeTitle(cleanHtmlText(value)
-    .replace(/\s*[,|–—-]\s*remote job\s*$/i, ''))
-    .replace(/\bsr\b/g, 'senior').replace(/\bmgr\b/g, 'manager');
+  const titleKey = directAtsTitleKey;
   const wantedTitle = titleKey(job.title || '');
   if (!wantedTitle) return null;
 
@@ -191,6 +227,7 @@ export function selectDirectAtsMatch(
   }
 
   const wantedSuffix = titleLocationSuffix(job.title);
+  const wantedRequisition = declaredRequisitionId(job.description);
   const territoryAgrees = (posting: BoardPosting) => {
     // Equal only because each title's own territory was stripped off means the
     // titles never actually agreed. "... - Milwaukee, WI" is not
@@ -201,7 +238,28 @@ export function selectDirectAtsMatch(
     if (postingSuffix && !locationsCompatibleForDirectMatch(job.location, postingSuffix)) return false;
     return true;
   };
+  // A same-title replacement is not the original application. Scraped copies
+  // sometimes retain the exact ATS URL even when the card still links through
+  // an aggregator. If that requisition is absent, refuse a newer sibling.
+  const sourceKeys = declaredSourcePostingKeys(job.description);
+  if (sourceKeys.size) {
+    if (sourceKeys.size !== 1) return null;
+    const exact = uniquePostings(postings.filter(posting => sourceKeys.has(directAtsPostingKey(posting))
+      && territoryAgrees(posting) && locationsCompatibleForDirectMatch(job.location, posting.location)));
+    return exact.length === 1 ? exact[0] : null;
+  }
+  const requisitionAgrees = (posting: BoardPosting) => {
+    const candidate = wantedRequisition ? declaredRequisitionId(posting.description) : null;
+    return !candidate || candidate === wantedRequisition;
+  };
+  if (wantedRequisition) {
+    const exact = uniquePostings(postings.filter(posting => posting.url && territoryAgrees(posting)
+      && locationsCompatibleForDirectMatch(job.location, posting.location)
+      && declaredRequisitionId(posting.description) === wantedRequisition));
+    if (exact.length === 1) return exact[0];
+  }
   const compatible = postings.filter((posting) => titleKey(posting.title || '') === wantedTitle
+    && requisitionAgrees(posting)
     && territoryAgrees(posting) && posting.url
     && locationsCompatibleForDirectMatch(job.location, posting.location));
   // Every posting under this title was ruled out by geography, or several
@@ -224,6 +282,7 @@ export function selectDirectAtsMatch(
   // salary terms). It cannot use a near match or generic employer boilerplate.
   const sameBody = (compatible.length > 1 ? compatible : postings).filter((posting) => {
     if (!posting.url || !territoryAgrees(posting)
+      || !requisitionAgrees(posting)
       || !locationsCompatibleForDirectMatch(job.location, posting.location)) return false;
     const postingBody = substantialDescription(posting.description);
     if (!postingBody) return false;
@@ -254,10 +313,17 @@ export function selectDirectAtsMatch(
 }
 
 /** Collapse only known URL aliases, retaining each provider's tenant scope. */
-function postingKey(posting: BoardPosting): string {
+export function directAtsPostingKey(posting: Pick<BoardPosting, 'url'>): string {
   const board = boardIdentityFromUrl(posting.url);
   if (!board) return normalizeUrl(posting.url);
   const url = new URL(posting.url);
+  if (board.platform === 'oracle') {
+    const id = url.pathname.match(/^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/[^/]+\/job\/(\d+)\/?$/i)?.[1];
+    // Oracle exposes one tenant requisition through several career sites and
+    // locales. Those are URL aliases, while production/test tenants and
+    // different requisition IDs remain distinct.
+    if (id) return `oracle:${url.hostname.toLowerCase()}:posting:${id}`;
+  }
   if (board.platform === 'workday') {
     url.pathname = url.pathname.replace(/\/apply\/?$/i, '');
     return generatePostingIdentity({ url: url.href }) || normalizeUrl(posting.url);
@@ -281,7 +347,7 @@ function postingKey(posting: BoardPosting): string {
 function uniquePostings(postings: readonly BoardPosting[]): BoardPosting[] {
   const unique = new Map<string, BoardPosting>();
   for (const posting of postings) {
-    const key = postingKey(posting);
+    const key = directAtsPostingKey(posting);
     // Stored candidates put the preferred canonical URL before retained
     // observations; do not replace it with an older alias of the same posting.
     if (!unique.has(key)) unique.set(key, posting);
@@ -517,7 +583,9 @@ export type DirectMatchDeps = {
   allowLivePing?: boolean;
   timeoutMs?: number;
   /** A bulk pass shares each board/title request, including failures. */
-  liveCache?: Map<string, Promise<BoardPosting[]>>;
+  liveCache?: Map<string, Promise<BoardPosting[] | null>>;
+  onOutcome?: (outcome: 'matched_stored' | 'matched_live' | 'no_verified_board'
+    | 'no_unique_stored_match' | 'live_unsupported' | 'live_unavailable' | 'no_unique_live_match') => void;
 };
 
 type DirectMatchStore = Pick<Prisma.TransactionClient, 'job'>
@@ -552,7 +620,9 @@ export class StoredAtsCatalogueLimitError extends Error {
 export async function findStoredAtsPostings(
   company: string,
   store: DirectMatchStore,
-): Promise<{ postings: BoardPosting[]; board: BoardIdentity | null; boards: BoardIdentity[] }> {
+  matchJobs?: readonly DirectMatchJob[],
+  options: { linksOnly?: boolean } = {},
+): Promise<StoredAtsCatalogue> {
   const { rules, index } = await employerRules(store);
   const employer = resolveEmployer({ company }, index);
   const wanted = normalizeCompany(employer || '');
@@ -595,13 +665,18 @@ export async function findStoredAtsPostings(
     if (board) boards.set(`${board.platform}:${board.slug}`, board);
   };
   let retainedBytes = 0;
+  // Short summaries cannot use the substantial-body fallback. Link-only
+  // recovery need not transfer every full JD merely to compare their titles.
+  // Ingestion still retrieves descriptions for enrichment after a match.
+  const needsDescriptions = !options.linksOnly || !matchJobs || matchJobs.some(job =>
+    substantialDescription(job.description, job.source) || declaredRequisitionId(job.description));
   let complete = false;
   let afterId: string | undefined;
   for (;;) {
     const page = await store.job.findMany({
       where: { OR: companyCandidates, ...(afterId ? { id: { gt: afterId } } : {}) },
       select: { id: true, title: true, company: true, employer: true, source: true,
-        url: true, canonicalUrl: true, location: true, description: true,
+        url: true, canonicalUrl: true, location: true, description: needsDescriptions,
         observations: { where: { source: { startsWith: 'ATS-' } }, select: { source: true, url: true } } },
       // A key boundary prevents OFFSET from rescanning every earlier row for
       // each page of a large employer and remains stable when rows disappear.
@@ -623,6 +698,16 @@ export async function findStoredAtsPostings(
       // One retained card can carry several ATS observations. Do not let the
       // order of those observations manufacture uniqueness between requisitions.
       if (urls.length === 0) continue;
+      const identities = urls.map(url => ({ url, board: boardIdentityFromUrl(url) }));
+      for (const { board } of identities) addBoard(board);
+      // Scan every page, but keep only candidates that could match this pass's
+      // jobs. Unrelated descriptions used to exhaust the 32 MiB safety limit
+      // for large employers, aborting even a match on the final page. Running
+      // the same predicate on each candidate preserves every title/body rival;
+      // uniqueness is still decided over the complete retained set below.
+      if (matchJobs && !matchJobs.some(job => identities.some(({ url }) => selectDirectAtsMatch(job, [{
+        title: row.title || '', url, location: row.location, description: row.description ?? null,
+      }])))) continue;
       // Count UTF-16 storage conservatively plus per-candidate object overhead.
       // Checking the raw text first also avoids normalizing an oversized body.
       retainedBytes += urls.reduce((bytes, url) => bytes + 512 + 2 * (
@@ -630,9 +715,7 @@ export async function findStoredAtsPostings(
       ), 0);
       if (retainedBytes > STORED_ATS_CATALOGUE_MAX_BYTES) throw new StoredAtsCatalogueLimitError(company);
       const description = descriptionText(row.description);
-      for (const url of urls) {
-        const board = boardIdentityFromUrl(url);
-        addBoard(board);
+      for (const { url, board } of identities) {
         candidates.push({ board, title: row.title || '', url, location: row.location, description });
       }
     }
@@ -682,7 +765,7 @@ export async function findBoardForCompany(
   company: string,
   store: DirectMatchStore,
 ): Promise<BoardIdentity | null> {
-  const { board } = await findStoredAtsPostings(company, store);
+  const { board } = await findStoredAtsPostings(company, store, [], { linksOnly: true });
   return board;
 }
 
@@ -763,16 +846,27 @@ async function fetchEightfoldPostings(board: BoardIdentity, job: { title: string
  * geography disagreement, or more than one equally plausible posting.
  */
 export async function resolveDirectAtsPosting(
-  job: { title: string; company: string; location?: string | null; description?: string | null; url?: string | null; canonicalUrl?: string | null; source?: string | null },
+  job: DirectMatchJob,
   deps: DirectMatchDeps,
 ): Promise<DirectAtsMatch | null> {
   if (!isAggregatorSource(job.source)) return null;
   if (!job.title?.trim() || !job.company?.trim()) return null;
 
-  const { postings: stored, board, boards } = await findStoredAtsPostings(job.company, deps.store);
+  const catalogue = await findStoredAtsPostings(job.company, deps.store, [job]);
+  return resolveDirectAtsPostingFromCatalogue(job, catalogue, deps);
+}
+
+/** Ingestion and scheduled repair share the same complete-catalogue decision. */
+export async function resolveDirectAtsPostingFromCatalogue(
+  job: DirectMatchJob,
+  { postings: stored, board, boards }: StoredAtsCatalogue,
+  deps: DirectMatchDeps,
+): Promise<DirectAtsMatch | null> {
+  if (!isAggregatorSource(job.source) || !job.title?.trim() || !job.company?.trim()) return null;
 
   const storedMatch = selectDirectAtsMatch(job, stored);
   if (storedMatch) {
+    deps.onOutcome?.('matched_stored');
     const identity = boardIdentityFromUrl(storedMatch.url) || board;
     return {
       url: normalizeUrl(storedMatch.url) || storedMatch.url,
@@ -780,7 +874,9 @@ export async function resolveDirectAtsPosting(
       platform: identity?.platform || 'unknown',
       slug: identity?.slug || '',
       matchedVia: 'stored',
-      matchedBy: selectDirectAtsMatch({ ...job, description: null }, stored)?.url === storedMatch.url ? 'title' : 'description',
+      matchedBy: declaredSourcePostingKeys(job.description).has(directAtsPostingKey(storedMatch)) ? 'source_url'
+        : declaredRequisitionId(job.description) && declaredRequisitionId(job.description) === declaredRequisitionId(storedMatch.description)
+        ? 'requisition' : selectDirectAtsMatch({ ...job, description: null }, stored)?.url === storedMatch.url ? 'title' : 'description',
       postingTitle: storedMatch.title,
       postingLocation: storedMatch.location,
     };
@@ -788,27 +884,36 @@ export async function resolveDirectAtsPosting(
 
   // We know the company's board but not this posting, which is exactly the case
   // where the board has moved on since its last sweep.
-  if (!boards.length || deps.allowLivePing === false) return null;
+  if (deps.allowLivePing === false) { deps.onOutcome?.('no_unique_stored_match'); return null; }
+  if (!boards.length) { deps.onOutcome?.('no_verified_board'); return null; }
+  if (boards.some(item => item.platform !== 'eightfold' && !supportsEmployerBoardLookup(item.platform))) {
+    deps.onOutcome?.('live_unsupported');
+    return null;
+  }
   const canonicalCompany = resolveEmployer({ company: job.company }, (await employerRules(deps.store)).index);
-  const key = board ? `${board.platform}:${board.slug}:${normalizeTitle(job.title)}`
-    : `boards:${JSON.stringify(boards.map(item => `${item.platform}:${item.slug}`).sort())}`;
+  // Workday/Eightfold queries are title-scoped even for multi-board employers.
+  const key = `boards:${JSON.stringify(boards.map(item => `${item.platform}:${item.slug}`).sort())}:${directAtsTitleKey(job.title)}`;
   let pending = deps.liveCache?.get(key);
   if (!pending) {
-    pending = board
-      ? fetchBoardPostings(board, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000,
-        { title: job.title, company: canonicalCompany })
-      : Promise.all(boards.map(item => fetchEmployerBoardPostings(item,
-        deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000)))
+    pending = Promise.all(boards.map(item => item.platform === 'eightfold'
+      // Eightfold already reads every search page and verifies each detail.
+      ? fetchBoardPostings(item, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000,
+        { title: job.title, company: canonicalCompany }).then(items => items.length ? items : null)
+      : fetchEmployerBoardPostings(item,
+        deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000, undefined,
+        { title: job.title, company: canonicalCompany })))
         // An unavailable board could contain a competing requisition. Never
         // turn a partial employer catalogue into a seemingly unique match.
-        .then(catalogues => catalogues.some(items => items === null) ? [] : catalogues.flatMap(items => items!));
+        .then(catalogues => catalogues.some(items => items === null) ? null : catalogues.flatMap(items => items!));
     deps.liveCache?.set(key, pending);
   }
   const live = await pending;
+  if (live === null) { deps.onOutcome?.('live_unavailable'); return null; }
   const liveMatch = selectDirectAtsMatch(job, live);
-  if (!liveMatch) return null;
+  if (!liveMatch) { deps.onOutcome?.('no_unique_live_match'); return null; }
   const identity = boardIdentityFromUrl(liveMatch.url) || board;
   if (!identity) return null;
+  deps.onOutcome?.('matched_live');
 
   return {
     url: normalizeUrl(liveMatch.url) || liveMatch.url,
@@ -816,7 +921,9 @@ export async function resolveDirectAtsPosting(
     platform: identity.platform,
     slug: identity.slug,
     matchedVia: 'live',
-    matchedBy: selectDirectAtsMatch({ ...job, description: null }, live)?.url === liveMatch.url ? 'title' : 'description',
+    matchedBy: declaredSourcePostingKeys(job.description).has(directAtsPostingKey(liveMatch)) ? 'source_url'
+      : declaredRequisitionId(job.description) && declaredRequisitionId(job.description) === declaredRequisitionId(liveMatch.description)
+      ? 'requisition' : selectDirectAtsMatch({ ...job, description: null }, live)?.url === liveMatch.url ? 'title' : 'description',
     postingTitle: liveMatch.title,
     postingLocation: liveMatch.location,
   };
@@ -890,7 +997,7 @@ export async function applyDirectMatchEnrichment(
   store: Pick<Prisma.TransactionClient, 'job'>,
 ): Promise<boolean> {
   const result = await store.job.updateMany({
-    where: { id: jobId, updatedAt: expectedUpdatedAt },
+    where: { id: jobId, updatedAt: expectedUpdatedAt, userCanonicalUrl: null },
     data: enrichment,
   });
   return result.count === 1;

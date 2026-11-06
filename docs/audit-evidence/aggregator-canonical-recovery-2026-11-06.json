@@ -1,0 +1,185 @@
+{
+  "auditDate": "2026-11-06",
+  "preparedAt": "2026-11-06T19:37:33.020257+00:00",
+  "codeReleaseStatus": "Local working-tree implementation; not committed, pushed, or deployed by this audit.",
+  "reviewBaseCommit": "3398a51c05f3023448eb108233d398953d699085",
+  "productionLogEvidence": {
+    "window": "Seven days preceding the November 6 audit",
+    "repeatedMemoryLimitFailures": 4177,
+    "distinctJobs": null,
+    "logSha256": "6bcabd5e21083b4f39a7141a0e01ea47e3fb9bb80a5e2afd025ae0370ecf35be"
+  },
+  "initialSnapshot": {
+    "at": "2026-11-06T19:03:47.222Z",
+    "activeNonAtsCards": 776,
+    "destinationsNotRecognizedAsDirectAts": 496,
+    "userPinnedWithinDiagnosticPopulation": 11,
+    "unresolvedByStatus": {
+      "applied": 255,
+      "inbox": 119,
+      "pending_af": 113,
+      "interviewing": 9
+    },
+    "caveat": "Unrecognized destinations include custom employer portals and pinned URLs; this is not a count of broken aggregator links."
+  },
+  "baselineNonAppliedAudit": {
+    "cards": 241,
+    "employers": 222,
+    "noRetrievedCatalogue": 144,
+    "noExactTitleCandidate": 85,
+    "catalogueMemoryFailures": 6,
+    "otherGeographyOrAmbiguity": 6,
+    "descriptionsUnder1000Characters": 102,
+    "matches": 0
+  },
+  "intermediateReadOnlyPass": {
+    "startedAt": "2026-11-06T19:18:36.468Z",
+    "finishedAt": "2026-11-06T19:29:50.487Z",
+    "selectedCards": 487,
+    "employerGroups": 429,
+    "outcomes": {
+      "no_verified_employer_catalogue": 322,
+      "no_unique_stored_match": 163,
+      "matched_stored": 2
+    },
+    "catalogueExceptions": 0,
+    "writes": 0,
+    "caveat": "Ran before the final requisition/location/source-URL guards. The proposed Oracle sibling was reviewed and rejected, then the original requisition was recovered separately."
+  },
+  "targetedMemoryRegression": {
+    "previouslyFailingEmployers": [
+      "Acosta",
+      "Honeywell International Inc.",
+      "Jobgether",
+      "American Express",
+      "Hewlett Packard Enterprise",
+      "Capital One"
+    ],
+    "completedWithoutMemoryLimit": 6,
+    "provenUniqueMatches": 1
+  },
+  "liveRepairs": {
+    "verifiedAt": [
+      "2026-11-06T19:30:31.133Z",
+      "2026-11-06T19:36:23.655Z"
+    ],
+    "count": 4,
+    "allowedJobFieldChanges": [
+      "url",
+      "canonicalUrl",
+      "updatedAt"
+    ],
+    "allOtherJobFieldsAndScoreEventsAndAttachmentsVerifiedUnchanged": true,
+    "repairs": [
+      {
+        "jobId": "82375c09-d345-4148-a669-d7400b70d478",
+        "company": "Capital One",
+        "title": "Business Development Manager, Luxury Travel (Remote Eligible)",
+        "status": "pending_af",
+        "beforeUrl": "https://www.jobleads.com/us/job/business-development-manager-luxury-travel-remote-eligible--united-states--ec7b2f4ad331a643448b4e73020a534be",
+        "beforeCanonicalUrl": "https://www.jobleads.com/us/job/business-development-manager-luxury-travel-remote-eligible--united-states--ec7b2f4ad331a643448b4e73020a534be",
+        "afterUrl": "https://capitalone.wd12.myworkdayjobs.com/en-US/Capital_One/job/McLean-VA/Business-Development-Manager--Luxury-Travel--Remote-Eligible-_R1004610-1",
+        "scoreEventsPreserved": 0,
+        "attachmentsPreserved": 0,
+        "preservedFieldsSha256": "b0291c6b07c66edb3d0570741c7bcb5ed9457fb48a60b2796c2244f1efac8b13",
+        "eventId": "6a9769c9-e82c-4e00-89e7-9ed6fc553548"
+      },
+      {
+        "jobId": "af2fd065-9ff8-4d23-b534-8415c3b96b9f",
+        "company": "Kennicott Brothers Co",
+        "title": "Account Manager",
+        "status": "inbox",
+        "beforeUrl": "https://www.adzuna.com/details/5952697893?utm_medium=api&utm_source=08ba2427",
+        "beforeCanonicalUrl": "https://www.adzuna.com/details/5952697893",
+        "afterUrl": "https://www.paycomonline.net/v4/ats/web.php/portal/8573AB960F9BE8C492D573A1D25A29DC/jobs/166018",
+        "scoreEventsPreserved": 2,
+        "attachmentsPreserved": 0,
+        "preservedFieldsSha256": "0c47ac91531fc35cab7c3ca76f7a3631622de9084b3dacd7962d2f3ef3e17b3e",
+        "eventId": "0912b7d2-5413-402f-8469-87cb0fc10d54"
+      },
+      {
+        "jobId": "6769804f-25f6-4edc-920d-1028b8a92652",
+        "company": "Barracuda Networks",
+        "title": "Partner Development Manager",
+        "status": "inbox",
+        "beforeUrl": "https://www.careerbuilder.com/job-details/partner-development-manager-duluth-ga--0fd4d895-3df7-4776-9c7c-53ebb9cc45a3",
+        "beforeCanonicalUrl": "https://www.careerbuilder.com/job-details/partner-development-manager-duluth-ga--0fd4d895-3df7-4776-9c7c-53ebb9cc45a3",
+        "afterUrl": "https://jobs.jobvite.com/barracuda-networks-inc/job/oxAYAfwp",
+        "scoreEventsPreserved": 2,
+        "attachmentsPreserved": 0,
+        "preservedFieldsSha256": "bd5c37f5e4e51bb0802ef5da8d7c4a8d979b2902b00f998725848f06f35d8b72",
+        "eventId": "0a9c83a2-cfa8-4944-a30a-b3d1ba29f04c"
+      },
+      {
+        "jobId": "9c6619a7-ea15-4f0f-babe-c10a1826bbdf",
+        "company": "Oracle",
+        "title": "Sr Customer Success Manager - Oracle Health",
+        "status": "applied",
+        "beforeUrl": "https://de.jobsyn.org/7b8f6e02b74c45d09ec9486a8e29316d8003",
+        "beforeCanonicalUrl": "https://de.jobsyn.org/7b8f6e02b74c45d09ec9486a8e29316d8003",
+        "afterUrl": "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_45001/job/338307",
+        "scoreEventsPreserved": 3,
+        "attachmentsPreserved": 0,
+        "preservedFieldsSha256": "63ae7cdad14d56c33c7135537af2558b9194bde1326f4fb7c01fc386ebcbf501",
+        "eventId": "e30136ef-ad4a-4144-809d-13e4ac2f9b02"
+      }
+    ]
+  },
+  "sourceDiscrepancies": [
+    {
+      "company": "Barracuda Networks",
+      "jobId": "6769804f-25f6-4edc-920d-1028b8a92652",
+      "employerRequisition": "27-0496",
+      "aggregatorUrlLocation": "Duluth, Georgia",
+      "liveEmployerLocation": "Spain",
+      "cardLocationAndScoresChanged": false
+    },
+    {
+      "company": "Oracle",
+      "jobId": "9c6619a7-ea15-4f0f-babe-c10a1826bbdf",
+      "rejectedSiblingRequisition": "347403",
+      "originalSourceRequisition": "338307",
+      "liveOriginalRequisitionTitle": "Customer Success Executive (Payer) - Oracle Health",
+      "cardTitleAndScoresChanged": false
+    }
+  ],
+  "validation": {
+    "fullSuite": {
+      "total": 3079,
+      "passed": 3069,
+      "failed": 0,
+      "skipped": 10,
+      "logSha256": "3b3adc6c0e7311bca5f00403d73ffac0c2f7d914c8522ba1b617c30a8d5dd4df"
+    },
+    "productionBuild": {
+      "passed": true,
+      "database": "Unusable local address; no production DB access",
+      "logSha256": "e80b0dcef1b8ef6037d156e3b0cc5a50f33b63c34092a617e0b4d245cd95039b"
+    },
+    "focusedLint": "Passed",
+    "whitespaceCheck": "Passed"
+  },
+  "codeFileSha256": {
+    "src/lib/atsDirectMatch.ts": "f49186363ce40c8ca9e3a003a22868a50b75b98ed938a78a3985ccd3686f606f",
+    "src/lib/workdayDirectMatch.ts": "700a3736a7f035c14bff016b2d3e9571065f62ca454bee1e44b2153ca5cccbcd",
+    "src/lib/aggregatorApplyUrl.ts": "3bc98921dcc72a44307ec8c91edbc9534a8228ed2f03fbaf63294cbd756da942",
+    "src/lib/employerBoardPostings.ts": "93ba69c6abf7dea79eb15fe7ebfadf378a84588c97515a4b4055b1dda2d55ce9",
+    "src/lib/directMatchLocation.ts": "613c047377c12c4af62391546b5af58bb3831d289e4eb9236e5fd92235dbb518",
+    "src/lib/jobIngestion.ts": "afa13aced6c8ca54e35fa21085d0d44ebe042476caf4bedb391b305e2d08c800",
+    "src/lib/himalayasEmployerResolution.ts": "6a18ad1527af0543bdda29dcc6bf078309a819e25d36a51880dd075ca5d12a4e",
+    "scripts/resolve_aggregator_ats_matches.ts": "30564cd63b42e85db51529d7067218bbeaf24e1667cdb73267947b34bfde6766",
+    "scripts/resolve_himalayas_browser_urls.ts": "843189e4997f2a20806cc3522e6ab4c65377f8b2eb25a435fae5440515382f62",
+    "scripts/resolve_himalayas_employer_urls.ts": "77f9f6f679d4bf69a9122c9af07a45729e885173e02934cb8e2c016cef1a2f33",
+    "src/lib/__tests__/atsDirectMatch.test.ts": "58c450356a0add8ca4d8ef98a80662f709056d053318c0605a5cebceacb90e61",
+    "src/lib/__tests__/atsDirectMatchRetrieval.test.ts": "61dd370a2b27ba436786ae0f1c14b9d39fe6b0c4a1b7bdacadfb3f2104df7fd5",
+    "src/lib/__tests__/aggregatorApplyUrl.test.ts": "fa86e04c6dcdd9deb49a74707bdaf74463779b02abe8ade6d5e7ba3cc8a6662f",
+    "src/lib/__tests__/workdayDirectMatch.test.ts": "8abd3d08b4f312af8fd8065faef6b79b55f51b8acdec342cc7599a6e0ef8b544",
+    "src/lib/__tests__/employerBoardPostings.test.ts": "5211df020e06479b1c6bbfaa859dc723d52532d1bc26b3f3ba32b4a3b817db6e",
+    "src/lib/__tests__/himalayasEmployerResolution.test.ts": "7b631c81056054ce306bbfc65fa767017a8c8867e0d007d3f7e8a7f9586ac499",
+    "tests/unit/zohoRecruitBoard.test.ts": "0e90a31357517784b2efbda551a6c7e1aae177103ded37bf5ff1fdfc3e877e38"
+  },
+  "providerContracts": [
+    "https://www.openwebninja.com/api/jsearch",
+    "https://serpapi.com/google-jobs-results"
+  ]
+}

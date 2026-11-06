@@ -24,7 +24,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Database and file backups | `career-dashboard-backup.timer` | Runs daily at 03:15 America/Chicago and catches a missed run after startup. Copies completed backups to the dedicated SSD attached to the M70. |
 | Common Crawl board discovery | `career-dashboard-discovery.timer` | Looks for candidate ATS boards weekly. Discovery does not itself activate every candidate. |
 | Stored and API canonical URL recovery | `career-dashboard-canonical-api.timer` | Ten minutes after each completed pass, checks up to 250 unresolved jobs against stored ATS postings, then checks up to 25 through supported employer APIs. Separate rotating cursors keep API misses from consuming the stored-match budget. Requires no browser license. Existing cards receive link-only repairs. |
-| Protected aggregator canonical URL recovery | `career-dashboard-canonical-resolver.timer` | Each hour, discovers official employer boards for eight unresolved Himalayas employers and rechecks eight protected Himalayas pages. Both bounded sets rotate. The licensed browser remains separate from stored and API matching. Existing cards receive link-only repairs. |
+| Protected aggregator canonical URL recovery | `career-dashboard-canonical-resolver.timer` | Each hour, discovers official employer boards for eight unresolved active Himalayas employers and rechecks eight active Himalayas pages. Stable ID/slug boundaries keep the bounded sets rotating as new cards arrive or links are repaired. The licensed browser remains separate from stored and API matching. Existing cards receive link-only repairs; user-selected links are excluded. |
 | Gusto ATS crawling | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, one minute after each completed pass. Its task and progress appear in ATS Crawling alongside the other public-board collectors. |
 | Public employer ATS boards | `career-dashboard-public-boards.timer` | Resumes bounded board turns about fifteen seconds after completion. Shares the licensed browser lock with Gusto and canonical recovery. Saves each board page and posting offset independently; respects operator pauses and ingestion capacity. |
 | Public employer ATS HTTP collection | `career-dashboard-public-http.timer` | Collects ADP plus supported Paylocity/iCIMS sweeps with the same source identities, task leases and board checkpoints. Runs independently of the licensed browser lock; unsupported Paylocity/iCIMS reads retain their exact saved position for licensed fallback. Its first installation inherits an enabled public-board lane; subsequent releases preserve a stopped timer. |
@@ -680,6 +680,43 @@ For rack work that requires disconnecting power, first run `sudo shutdown -h now
 The canonical resolver keeps the existing aggregator API pass and licensed browser fallback. Between them, a bounded employer-discovery pass reads the official website from Himalayas public MCP, follows employer-owned careers pages, and checks complete public catalogues from Lever, Greenhouse, Ashby, Recruitee, Breezy, and BambooHR. Unsupported, unreadable, truncated, or ambiguous catalogues defer the employer. This pass changes only verified application links; descriptions, scores, card status, application history, and duplicate-card decisions are untouched. Verified mappings use the exact Himalayas company slug and do not alter global employer-name rules. Permanently retired boards remain retired.
 
 Use `npm run himalayas:resolve-employers -- --company-slug=panopto` for a read-only preview. Dry runs do not persist mappings or advance the cursor. The hourly service adds `--apply --limit=8`; each employer failure is isolated and the applied rotation advances so one miss cannot starve other employers.
+
+### Canonical recovery diagnostics (November 6, 2026)
+
+The stored/API repair and new ingestion use the same matching decision. Stored
+retrieval scans every bounded page while retaining only candidates relevant to
+the selected jobs; it keeps late competitors and every verified employer board.
+Live matching uses complete supported catalogues, including exact Workday title
+searches and verified details. Missing pages, unavailable boards or conflicting
+posting evidence cannot establish a unique match. An exact original ATS URL in
+saved source metadata binds the match to that requisition, preventing a newer
+same-title role from replacing an earlier application.
+
+Applied scheduled passes save restricted JSON reports beside their two cursors:
+`data/runtime/canonical-stored-cursor.json.report.json` and
+`data/runtime/canonical-api-cursor.json.report.json`. Each report gives its time
+window, outcome counts, per-job results, proposed targets, writes and concurrency
+refusals. Check the report's completion time against the service journal: a
+report from an earlier pass is not evidence that the current pass completed.
+A missing verified board or ambiguous posting is different from a failed
+catalogue request; zero matches alone does not justify a bulk retry or relaxation
+of identity checks.
+
+For an isolated read-only preview, use:
+
+```sh
+npm run ats:resolve-aggregators -- --links-only --stored-only --job-id=<UUID> --report-path=/tmp/canonical-preview.json
+```
+
+Omit `--stored-only` to include supported live employer lookups. Add `--apply`
+only for an authorized repair. User-selected URLs and concurrent card edits
+are protected at write time. Scheduled repairs preserve scores, descriptions,
+attachments and lifecycle states. The browser and employer-discovery passes
+checkpoint stable boundaries before network attempts; old positional cursors
+start one new rotation without changing any cards.
+
+See the [November 6 recovery audit](AGGREGATOR_CANONICAL_RECOVERY_AUDIT_2026-11-06.md)
+for reproduced failures, acceptance cases and release status.
 
 
 ## Public employer board collectors (October 17, 2026)

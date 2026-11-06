@@ -61,6 +61,7 @@ import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFall
 import { prismaKeyCooldownStore } from './apiKeyCooldownStore';
 import path from 'node:path';
 import { resolveRedirectUrl } from './atsRedirect';
+import { preferredAggregatorApplyUrl } from './aggregatorApplyUrl';
 import {
   isClosedJobPosting,
   isScorableJobDescription,
@@ -1691,9 +1692,8 @@ export function parseJSearchJob(job: Record<string, unknown>): IncomingJob | nul
     company: typeof job.employer_name === 'string' ? job.employer_name : 'Unknown Company',
     description: typeof job.job_description === 'string' ? job.job_description : '',
     location: [city, state].filter(Boolean).join(', ') || 'Unknown Location',
-    url: typeof job.job_apply_link === 'string' && job.job_apply_link
-      ? job.job_apply_link
-      : typeof job.job_google_link === 'string' ? job.job_google_link : '',
+    url: preferredAggregatorApplyUrl({ primary: job.job_apply_link,
+      fallback: job.job_google_link, options: job.apply_options }),
     source: 'JSearch',
     sourceId,
     postedAt: Number.isNaN(postedAt.getTime()) ? new Date() : postedAt,
@@ -4852,9 +4852,8 @@ export async function ingestJobs(
             company: job.company_name,
             description: job.description,
             location: job.location,
-            url:
-              job.apply_options?.[0]?.link ||
-              `https://www.google.com/search?q=${encodeURIComponent(fallbackQuery)}`,
+            url: preferredAggregatorApplyUrl({ options: job.apply_options,
+              fallback: `https://www.google.com/search?q=${encodeURIComponent(fallbackQuery)}` }),
             source: "SerpApi",
             sourceId: job.job_id,
             postedAt,
