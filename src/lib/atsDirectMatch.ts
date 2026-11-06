@@ -53,7 +53,7 @@ import { eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl,
 import { workdayBoardSlugFromJobUrl } from './atsBoardYield';
 import { reserveProviderBudgetForSource } from './ingestionControl';
 import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardRequest, parseZohoRecruitListing } from './zohoRecruitBoard';
-import { fetchEmployerBoardPostings, supportsEmployerBoardLookup } from './employerBoardPostings';
+import { EMPLOYER_CATALOGUE_TIMEOUT_MS, fetchEmployerBoardPostings, supportsEmployerBoardLookup } from './employerBoardPostings';
 import { adpPostingsConflict } from './adpPostingIdentity';
 import { workdayAliasCandidates } from './workdayDirectMatch';
 
@@ -938,7 +938,7 @@ export async function resolveDirectAtsPostingFromCatalogue(
   if (workdayAliasCandidates(stored)) {
     const identity = boardIdentityFromUrl(stored[0].url)!;
     const aliases = await fetchEmployerBoardPostings(identity, deps.fetcher || safeExternalFetch,
-      deps.timeoutMs ?? 12_000, undefined, { title: job.title, company: canonicalCompany, canonicalEmployer, storedAliases: stored });
+      deps.timeoutMs ?? EMPLOYER_CATALOGUE_TIMEOUT_MS, undefined, { title: job.title, company: canonicalCompany, canonicalEmployer, storedAliases: stored });
     const aliasMatch = aliases && selectDirectAtsMatch(job, aliases);
     if (aliasMatch) {
       deps.onOutcome?.('matched_live');
@@ -957,10 +957,10 @@ export async function resolveDirectAtsPostingFromCatalogue(
   if (!pending) {
     pending = Promise.all(boards.map(item => item.platform === 'eightfold'
       // Eightfold already reads every search page and verifies each detail.
-      ? fetchBoardPostings(item, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000,
+      ? fetchBoardPostings(item, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? EMPLOYER_CATALOGUE_TIMEOUT_MS,
         { title: job.title, company: canonicalCompany }).then(items => items.length ? items : null)
       : fetchEmployerBoardPostings(item,
-        deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000, undefined,
+        deps.fetcher || safeExternalFetch, deps.timeoutMs ?? EMPLOYER_CATALOGUE_TIMEOUT_MS, undefined,
         { title: job.title, company: canonicalCompany, canonicalEmployer })))
         // An unavailable board could contain a competing requisition. Never
         // turn a partial employer catalogue into a seemingly unique match.

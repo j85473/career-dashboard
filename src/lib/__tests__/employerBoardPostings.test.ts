@@ -102,3 +102,43 @@ test('shared recovery distinguishes a cached unavailable board from a complete e
     fetcher: async () => Response.json({ jobs: [] }) });
   assert.equal(outcomes.at(-1), 'no_unique_live_match');
 });
+
+test('a complete Workday search can outlast the old ping deadline while explicit deadlines still stop it', async (t) => {
+  let now = 0;
+  const deadlines: Array<{ controller: AbortController; at: number }> = [];
+  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
+    const controller = new AbortController();
+    deadlines.push({ controller, at: now + milliseconds });
+    return controller.signal;
+  });
+  const board = { platform: 'workday', slug: 'acme.wd1::Careers' };
+  const job = { title: 'Account Manager', company: 'Acme', source: 'LinkedIn', location: 'USA' };
+  const rows = Array.from({ length: 135 }, (_, index) => ({
+    title: index === 134 ? job.title : 'Other Position',
+    externalPath: `/job/USA/Position_R${index + 1}`,
+  }));
+  const url = 'https://acme.wd1.myworkdayjobs.com/en-US/Careers/job/USA/Position_R135';
+  const fetcher: typeof safeExternalFetch = async (input, init) => {
+    // Virtual production latency: seven pages and one detail take 24 seconds.
+    now += 3_000;
+    for (const deadline of deadlines) if (deadline.at <= now) deadline.controller.abort();
+    init?.signal?.throwIfAborted();
+    if (String(input).endsWith('/jobs')) {
+      const { offset } = JSON.parse(String(init?.body));
+      return Response.json({ total: offset === 0 ? 135 : 0, jobPostings: rows.slice(offset, offset + 20) });
+    }
+    return Response.json({ hiringOrganization: { name: 'Acme' }, jobPostingInfo: {
+      title: job.title, externalUrl: url, jobReqId: 'R135', location: 'USA', jobDescription: 'Exact employer posting.',
+    } });
+  };
+  const outcomes: string[] = [];
+  const catalogue = { board, boards: [board], postings: [] };
+  const deps = { store: { job: {} } as never, fetcher, onOutcome: (value: string) => outcomes.push(value) };
+  const match = await resolveDirectAtsPostingFromCatalogue(job, catalogue, deps);
+  assert.equal(match?.url, url);
+  assert.equal(now, 24_000);
+  assert.equal(outcomes.at(-1), 'matched_live');
+
+  assert.equal(await resolveDirectAtsPostingFromCatalogue(job, catalogue, { ...deps, timeoutMs: 15_000 }), null);
+  assert.equal(outcomes.at(-1), 'live_unavailable');
+});

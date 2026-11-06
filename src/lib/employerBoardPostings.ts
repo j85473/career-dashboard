@@ -6,6 +6,11 @@ import { fetchWorkdayMatchPostings, fetchWorkdayStoredAliases, type WorkdayMatch
 import { parseZohoRecruitListing } from './zohoRecruitBoard';
 import { readAdditionalEmployerCatalogue, supportsAdditionalEmployerCatalogue } from './employerCatalogueReaders';
 
+// A complete paginated search can take longer on M70 than a single ATS ping.
+// C.H. Robinson required 20 seconds for seven pages plus exact details while
+// sharing the production request leases. Keep a bounded budget for that work.
+export const EMPLOYER_CATALOGUE_TIMEOUT_MS = 30_000;
+
 export function supportsEmployerBoardLookup(platform: string): boolean {
   return ['workday', 'lever', 'greenhouse', 'ashby', 'recruitee', 'breezy', 'bamboohr',
     'smartrecruiters', 'workable', 'teamtailor', 'pinpoint', 'zohorecruit'].includes(platform)
@@ -16,7 +21,7 @@ export function supportsEmployerBoardLookup(platform: string): boolean {
 export async function fetchEmployerBoardPostings(
   board: BoardIdentity,
   fetcher: typeof safeExternalFetch = safeExternalFetch,
-  timeoutMs = 15_000,
+  timeoutMs = EMPLOYER_CATALOGUE_TIMEOUT_MS,
   parentSignal?: AbortSignal,
   job?: WorkdayMatchJob,
 ): Promise<BoardPosting[] | null> {

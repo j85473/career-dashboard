@@ -18,8 +18,9 @@ EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 # employer APIs cannot consume the stored-match budget.
 ExecStartPre=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply --links-only --active-only --stored-only --max-jobs=250 --cursor-path=data/runtime/canonical-stored-cursor.json
 ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply --links-only --active-only --max-jobs=25 --cursor-path=data/runtime/canonical-api-cursor.json
-# Includes bounded source-link and official-site recovery after catalogue misses.
-TimeoutStartSec=30min
+# Includes complete 30-second catalogues and bounded source/site recovery.
+# Leave room for 25 live candidates, including alias verification and DB reads.
+TimeoutStartSec=40min
 NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077

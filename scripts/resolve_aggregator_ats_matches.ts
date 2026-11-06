@@ -16,6 +16,7 @@ import { rotatingCandidateIds } from '../src/lib/himalayasBrowserResolver';
 import { canonicalRecoveryCheckpoint, selectCanonicalRecoveryIds } from '../src/lib/canonicalRecoverySelection';
 import { recoverAggregatorSource, sourceRecoveryCache, type SourceRecoveryResult } from '../src/lib/aggregatorSourceRecovery';
 import { isPermanentAtsBoardRetirement, recordDiscoveredAtsBoard } from '../src/lib/atsBoardDiscovery';
+import { EMPLOYER_CATALOGUE_TIMEOUT_MS } from '../src/lib/employerBoardPostings';
 
 /**
  * Points existing aggregator listings at the employer's own ATS posting.
@@ -79,8 +80,6 @@ function parseArguments(argv: string[]): Options {
   if (options.maxJobs && options.limit !== null) throw new Error('Choose either --max-jobs or the company --limit');
   return options;
 }
-
-const BOARD_TIMEOUT_MS = 15_000;
 
 async function retainSourceDiscovery(company: string, recovery: SourceRecoveryResult, apply: boolean): Promise<boolean> {
   if (!recovery.discoveries || !recovery.match || !recovery.website) return true;
@@ -212,7 +211,7 @@ async function main(): Promise<void> {
           fromUrl: job.url } as (typeof attempts)[number];
         attempts.push(attempt);
         let match = await resolveDirectAtsPostingFromCatalogue(job, catalogue, {
-          store: prisma, allowLivePing: !storedOnly, timeoutMs: BOARD_TIMEOUT_MS, liveCache,
+          store: prisma, allowLivePing: !storedOnly, timeoutMs: EMPLOYER_CATALOGUE_TIMEOUT_MS, liveCache,
           onOutcome: outcome => { attempt.outcome = outcome; },
         });
         if (!match && !storedOnly) {
