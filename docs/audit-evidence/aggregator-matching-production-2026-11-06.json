@@ -1,0 +1,241 @@
+{
+  "verifiedAt": "2026-11-06T21:52:07.907Z",
+  "deployedCommit": "db03c6442cb8ef93a467f7171bed5307cef4bcbd",
+  "workflow": "https://github.com/j85473/career-dashboard/actions/runs/42297898724",
+  "tests": {
+    "total": 3098,
+    "passed": 3088,
+    "skipped": 10,
+    "failed": 0
+  },
+  "productionBuild": "passed with unusable database credentials",
+  "health": {
+    "ok": true,
+    "database": true,
+    "schema": true,
+    "migration": true
+  },
+  "rootHttpStatus": 200,
+  "deployedFileHashesVerified": 9,
+  "serviceAndTimerStatesVerified": 13,
+  "canonicalServiceTimeout": "40min",
+  "auditCandidates": 496,
+  "auditedEmployers": 433,
+  "verifiedLinkRepairs": [
+    {
+      "id": "10402c22-92bb-48ef-bcea-7c2bd4c41c60",
+      "company": "Unlimited Potential",
+      "title": "Key Account Manager- Earthwise",
+      "from": "https://himalayas.app/companies/unlimited-potential/jobs/key-account-manager-earthwise?utm_source=api",
+      "to": "https://recruiting2.ultipro.com/BUN1000BUNZL/JobBoard/e6decf20-c86a-432d-8796-d23e69732c85/OpportunityDetail?opportunityId=8633408a-219f-41b0-8ed0-5f55ee6e4cfa"
+    },
+    {
+      "id": "174047d4-9d3e-4d83-920b-bb102eccb1f8",
+      "company": "Textron",
+      "title": "Regional Sales Manager",
+      "from": "https://careers.textron.com/minneapolis-mn/regional-sales-manager/64B672E4E3DE40A581B7A5DA03B081AD/job/?vs=8003",
+      "to": "https://textron.taleo.net/careersection/ezgo/jobdetail.ftl?job=345049"
+    },
+    {
+      "id": "29883b55-e65b-46b2-9c3d-0c274ccf0360",
+      "company": "CAS",
+      "title": "SA30T2 Sr Key Accounts Manager",
+      "from": "https://himalayas.app/companies/cas/jobs/sa30t2-sr-key-accounts-manager?utm_source=api",
+      "to": "https://recruiting.ultipro.com/AME1095ACHM/JobBoard/c06ddd6c-8fd2-42b0-96f5-4d70bdc7655a/OpportunityDetail?opportunityId=7cfba0dd-557b-47e7-b3f5-571040f491a2"
+    },
+    {
+      "id": "460bd585-2819-4c45-a539-2481a7faa90d",
+      "company": "GN Hearing",
+      "title": "Territory Sales Manager/ Key Accounts",
+      "from": "https://de.jobsyn.org/9fcd13d204ed4a9bad468f57d6df92c28003",
+      "to": "https://gn.wd3.myworkdayjobs.com/GN-Careers/job/MN-Shakopee/Territory-Sales-Manager--Key-Accounts_R30151-1"
+    },
+    {
+      "id": "8f9eb5a5-365f-4f95-ae1c-8be9b34eef14",
+      "company": "C.H. Robinson",
+      "title": "Account Manager",
+      "from": "https://www.linkedin.com/jobs/view/account-manager-at-c-h-robinson-4486383716?trk=public_jobs_topcard-title",
+      "to": "https://chrobinson.wd5.myworkdayjobs.com/en-US/CHRobinson/job/Eden-Prairie-MN-United-States-of-America/Account-Manager_R50047"
+    },
+    {
+      "id": "95094d89-38e3-4fbe-840b-7e3d3761e2fe",
+      "company": "Jaggaer",
+      "title": "Support Account Manager (Remote)",
+      "from": "https://www.ziprecruiter.com/c/jaggaer/Job/Support-Account-Manager-(Remote)/-in-Durham,NC?jid=02055ff2e4e97191",
+      "to": "https://careers-jaggaer.icims.com/jobs/4195/support-account-manager-%28remote%29/job"
+    },
+    {
+      "id": "b3a75fbc-cefc-4a7a-8a9c-9920a72815e3",
+      "company": "Tenvoorde Ford, Inc.",
+      "title": "Automotive Sales Manager",
+      "from": "https://us.trabajo.org/job-4111-b32719ac323231569d13c58b32adcff1",
+      "to": "https://careers.hireology.com/tenvoordefordinc/2920946/description"
+    },
+    {
+      "id": "e0b4dd51-34d3-4c28-9e21-6f7800a3c213",
+      "company": "Resideo",
+      "title": "Lead Account Manager - MRO",
+      "from": "https://www.linkedin.com/jobs/view/lead-account-manager-mro-at-resideo-4485032231?trk=public_jobs_topcard-title",
+      "to": "https://ehtl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/19340"
+    },
+    {
+      "id": "e3c3e17e-5829-494f-8009-982a6a4158b3",
+      "company": "Cretex Companies, Inc.",
+      "title": "Account Manager, Associate",
+      "from": "https://www.indeed.com/viewjob?jk=02e2ea82a24357c2&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic",
+      "to": "https://careers-cretex.icims.com/jobs/6476/account-manager%2c-associate/job"
+    }
+  ],
+  "independentReplay": [
+    {
+      "id": "10402c22-92bb-48ef-bcea-7c2bd4c41c60",
+      "company": "Unlimited Potential",
+      "outcome": "matched_live",
+      "matchedBy": "title",
+      "url": "https://recruiting2.ultipro.com/BUN1000BUNZL/JobBoard/e6decf20-c86a-432d-8796-d23e69732c85/OpportunityDetail?opportunityId=8633408a-219f-41b0-8ed0-5f55ee6e4cfa",
+      "repairedUrlColumnsMasked": true,
+      "preRepairSourceObservations": []
+    },
+    {
+      "id": "174047d4-9d3e-4d83-920b-bb102eccb1f8",
+      "company": "Textron",
+      "outcome": "matched_stored",
+      "matchedBy": "title",
+      "url": "https://textron.taleo.net/careersection/ezgo/jobdetail.ftl?job=345049",
+      "repairedUrlColumnsMasked": true,
+      "preRepairSourceObservations": [
+        {
+          "source": "ATS-taleo",
+          "url": "https://textron.taleo.net/careersection/ezgo/jobdetail.ftl?job=345049",
+          "observedAt": "2026-11-05T15:21:49.546Z"
+        }
+      ]
+    },
+    {
+      "id": "29883b55-e65b-46b2-9c3d-0c274ccf0360",
+      "company": "CAS",
+      "outcome": "matched_live",
+      "matchedBy": "title",
+      "url": "https://recruiting.ultipro.com/AME1095ACHM/JobBoard/c06ddd6c-8fd2-42b0-96f5-4d70bdc7655a/OpportunityDetail?opportunityId=7cfba0dd-557b-47e7-b3f5-571040f491a2",
+      "repairedUrlColumnsMasked": true,
+      "preRepairSourceObservations": []
+    },
+    {
+      "id": "460bd585-2819-4c45-a539-2481a7faa90d",
+      "company": "GN Hearing",
+      "outcome": "matched_live",
+      "matchedBy": "requisition",
+      "url": "https://gn.wd3.myworkdayjobs.com/GN-Careers/job/MN-Shakopee/Territory-Sales-Manager--Key-Accounts_R30151-1",
+      "repairedUrlColumnsMasked": true,
+      "preRepairSourceObservations": []
+    },
+    {
+      "id": "8f9eb5a5-365f-4f95-ae1c-8be9b34eef14",
+      "company": "C.H. Robinson",
+      "outcome": "matched_live",
+      "matchedBy": "description",
+      "url": "https://chrobinson.wd5.myworkdayjobs.com/en-US/CHRobinson/job/Eden-Prairie-MN-United-States-of-America/Account-Manager_R50047",
+      "repairedUrlColumnsMasked": true,
+      "preRepairSourceObservations": []
+    },
+    {
+      "id": "95094d89-38e3-4fbe-840b-7e3d3761e2fe",
+      "company": "Jaggaer",
+      "outcome": "matched_stored",
+      "matchedBy": "title",
+      "url": "https://careers-jaggaer.icims.com/jobs/4195/support-account-manager-%28remote%29/job",
+      "repairedUrlColumnsMasked": true,
+      "preRepairSourceObservations": []
+    },
+    {
+      "id": "e0b4dd51-34d3-4c28-9e21-6f7800a3c213",
+      "company": "Resideo",
+      "outcome": "matched_live",
+      "matchedBy": "title",
+      "url": "https://ehtl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/19340",
+      "repairedUrlColumnsMasked": true,
+      "preRepairSourceObservations": []
+    },
+    {
+      "id": "b3a75fbc-cefc-4a7a-8a9c-9920a72815e3",
+      "company": "Tenvoorde Ford, Inc.",
+      "outcome": "matched_observed_public_apply_redirect",
+      "url": "https://careers.hireology.com/tenvoordefordinc/2920946/description",
+      "sourceObservedAt": "2026-11-06T20:42:37.503Z",
+      "sourceSha256": "5d4e5bbc1e79eeda1d48702b73792af5d187ecdc26885591063d21bae0afc82e",
+      "employerHttpStatus": 200,
+      "employerSha256": "709f8d3013a196b87378b1816fce32c0cde62832a797b4a8df59ad3f80fb91fe",
+      "applied": true
+    },
+    {
+      "at": "2026-11-06T21:52:07.907Z",
+      "id": "e3c3e17e-5829-494f-8009-982a6a4158b3",
+      "company": "Cretex Companies, Inc.",
+      "title": "Account Manager, Associate",
+      "url": "https://careers-cretex.icims.com/jobs/6476/account-manager%2c-associate/job",
+      "outcome": "matched_stored",
+      "matchedBy": "title",
+      "repairedUrlColumnsMasked": true,
+      "originalSourceObservationsReplayed": true,
+      "originalSnapshotFieldsPreserved": [
+        "id",
+        "title",
+        "company",
+        "employer",
+        "description",
+        "location",
+        "source",
+        "sourceId",
+        "status",
+        "fitScore",
+        "aimFitScore",
+        "reqFitScore",
+        "createdAt"
+      ],
+      "apiVerified": true
+    }
+  ],
+  "scheduledAutomaticRepairs": [
+    "Jaggaer",
+    "Cretex Companies, Inc."
+  ],
+  "preservation": {
+    "fullRecordComparisons": 10,
+    "scoreEventsPreserved": 16,
+    "attachmentsPreserved": 1,
+    "activePinnedLinksPreserved": 47,
+    "additionalOriginalSnapshotComparison": "e3c3e17e-5829-494f-8009-982a6a4158b3",
+    "additionalSnapshotFieldsPreserved": [
+      "id",
+      "title",
+      "company",
+      "employer",
+      "description",
+      "location",
+      "source",
+      "sourceId",
+      "status",
+      "fitScore",
+      "aimFitScore",
+      "reqFitScore",
+      "createdAt"
+    ]
+  },
+  "followupCatalogueRecheck": {
+    "count": 64,
+    "outcomes": {
+      "live_unavailable": 57,
+      "stored_match_requires_live_confirmation": 1,
+      "no_unique_live_match": 3,
+      "already_direct": 2,
+      "matched_live": 1
+    }
+  },
+  "limitations": [
+    "The 64-case follow-up used the normal production provider controls with an explicit 30-second budget while db03c644 was activating; final independent replays used the active db03c644 defaults.",
+    "Seven non-Tenvoorde targeted repairs were replayed with repaired URL columns masked and only pre-baseline source observations; Cretex was replayed separately from the original audit snapshot.",
+    "Tenvoorde used its already-observed public Apply redirect, a hash-verified captured source page, and a newly verified HTTP-200 employer destination. Its subsequently rate-limited source was not revisited.",
+    "The initial 496-card audit contained 20 already-direct classification cases. Those are separate from these nine URL repairs.",
+    "Source HTTP 404/410 responses alone do not establish employer closure. Ambiguous and retired-board cases were held without lifecycle changes."
+  ]
+}

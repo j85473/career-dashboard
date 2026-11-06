@@ -30,3 +30,13 @@ Dandy's live candidate is held by a permanent board retirement. Socure is held b
 Regression coverage includes Workday zero-count continuations and late rivals, exact cross-site requisition verification, employer aliases, source Apply redirects, unavailable rival destinations, foreign employers/countries, historical requisition conflicts, static asset rejection, BrassRing fragments, and ADP tenant identity and one-based pagination. The full suite and production build run before release; the build uses unusable database credentials.
 
 The normal stored/live timer keeps its separate rotating cursors and link-only writes. The live phase now includes bounded source recovery after a catalogue miss. Its service timeout is 40 minutes to accommodate complete 30-second catalogues and bounded source recovery for 25 live candidates. Existing job descriptions, scores, attachments, lifecycle and user-pinned URLs remain protected by the existing write guard.
+
+## Verified production outcome
+
+Release `db03c6442cb8ef93a467f7171bed5307cef4bcbd` completed the normal M70 deployment on November 6. Independent replays and the live job API verified **nine link repairs**: Unlimited Potential/Bunzl, Textron, CAS, GN Hearing, C.H. Robinson, Jaggaer, Tenvoorde Ford, Resideo and Cretex. The normal scheduled stored pass recovered Jaggaer and Cretex automatically. Textron already had an employer careers link; its repair exposed the exact Taleo requisition.
+
+The production deadline follow-up rechecked 64 previously inconclusive catalogue lookups. It found Resideo, identified two cards the scheduled pass had already repaired, obtained three complete but non-unique catalogues, retained one candidate requiring live confirmation, and left 57 catalogue reads inconclusive. Those 57 are not claims that no matching job exists.
+
+The final suite passed 3,088 tests with ten skips and no failures. The build passed with unusable database credentials. Runtime checks verified the active code release, nine deployed source-file hashes, HTTP 200 application/health responses, and all 13 expected active service/timer states. Ten full card records preserved every field except the eight intended link updates and their timestamps, including 16 score events and one attachment. Cretex separately preserved the original audit snapshot's score fields, description, employer, title and lifecycle. All 47 active pinned links remained unchanged.
+
+[Production evidence](audit-evidence/aggregator-matching-production-2026-11-06.json) records the exact destinations, matching paths, preservation scope and remaining limitations. The full 496-card post-deployment inventory is retained in the local task evidence.
