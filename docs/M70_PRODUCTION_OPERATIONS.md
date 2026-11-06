@@ -23,7 +23,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Repair watchdog | `career-dashboard-watchdog.timer` | Runs the existing repair checks every 15 minutes. Preserves the cap of three repairs per action per six hours and the ledger across releases. A critical finding remains a failed service result, not a successful health check. |
 | Database and file backups | `career-dashboard-backup.timer` | Runs daily at 03:15 America/Chicago and catches a missed run after startup. Copies completed backups to the dedicated SSD attached to the M70. |
 | Common Crawl board discovery | `career-dashboard-discovery.timer` | Looks for candidate ATS boards weekly. Discovery does not itself activate every candidate. |
-| Stored and API canonical URL recovery | `career-dashboard-canonical-api.timer` | Ten minutes after each completed pass, checks up to 250 unresolved jobs against stored ATS postings, then checks up to 25 through supported employer APIs. Separate rotating cursors keep API misses from consuming the stored-match budget. Requires no browser license. Existing cards receive link-only repairs. |
+| Stored and API canonical URL recovery | `career-dashboard-canonical-api.timer` | Ten minutes after each completed pass, retries up to 10 retained aggregator arrivals, checks up to 250 unresolved jobs against stored ATS postings, then checks up to 25 through supported employer APIs. Separate rotating cursors keep API misses from consuming the stored-match budget. Requires no browser license. Existing cards receive link-only repairs. |
 | Protected aggregator canonical URL recovery | `career-dashboard-canonical-resolver.timer` | Each hour, discovers official employer boards for eight unresolved active Himalayas employers and rechecks eight active Himalayas pages. Stable ID/slug boundaries keep the bounded sets rotating as new cards arrive or links are repaired. The licensed browser remains separate from stored and API matching. Existing cards receive link-only repairs; user-selected links are excluded. |
 | Gusto ATS crawling | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, one minute after each completed pass. Its task and progress appear in ATS Crawling alongside the other public-board collectors. |
 | Public employer ATS boards | `career-dashboard-public-boards.timer` | Resumes bounded board turns about fifteen seconds after completion. Shares the licensed browser lock with Gusto and canonical recovery. Saves each board page and posting offset independently; respects operator pauses and ingestion capacity. |
@@ -679,7 +679,33 @@ For rack work that requires disconnecting power, first run `sudo shutdown -h now
 
 The canonical resolver keeps the existing aggregator API pass and licensed browser fallback. Between them, a bounded employer-discovery pass reads the official website from Himalayas public MCP, follows employer-owned careers pages, and checks complete public catalogues from Lever, Greenhouse, Ashby, Recruitee, Breezy, and BambooHR. Unsupported, unreadable, truncated, or ambiguous catalogues defer the employer. This pass changes only verified application links; descriptions, scores, card status, application history, and duplicate-card decisions are untouched. Verified mappings use the exact Himalayas company slug and do not alter global employer-name rules. Permanently retired boards remain retired.
 
-The November 6 follow-up also adds source recovery to the ordinary API pass after a catalogue miss. It checks published Apply controls and source-provided official employer websites, with a 25-second source-recovery bound, a 30-second complete-catalogue budget, and a 40-minute service timeout. Validated public acquisition readers are shared with canonical recovery; crawl-excluded historical postings remain ambiguity evidence without reactivating their boards. See [the remaining-gap audit](AGGREGATOR_MATCHING_GAPS_2026-11-06.md) for provider details, source-access limits and per-job evidence.
+The November 6 follow-up also adds source recovery to the ordinary API pass after a catalogue miss. It checks published Apply controls and source-provided official employer websites, with a 25-second source-recovery bound and a 30-second complete-catalogue budget. The service has a 50-minute timeout including retained-intake retries. Validated public acquisition readers are shared with canonical recovery; crawl-excluded historical postings remain ambiguity evidence without reactivating their boards. See [the remaining-gap audit](AGGREGATOR_MATCHING_GAPS_2026-11-06.md) for provider details, source-access limits and per-job evidence.
+
+### Employer verification before aggregator admission
+
+Both collector and external-feed ingestion check a known employer's stored ATS
+postings before creating a new aggregator card. If the stored catalogue has no
+unique match, ingestion requests the supported live employer catalogue. A
+verified match supplies the canonical URL and goes through normal deduplication.
+A complete successful catalogue with no compatible posting rejects the arrival
+and records `canonical_intake_expired`; it creates no Job or scoring work.
+
+Unavailable, unsupported, incomplete, excluded or ambiguous known boards retain
+the arrival in `AggregatorIntakeCandidate`, outside the dashboard and scoring.
+The canonical API service retries up to 10 due candidates per pass with an atomic
+lease and backoff from 10 minutes to six hours. It preserves the original payload,
+source URL and ingestion route. Failed retries remain retained. A real source
+observation confirms admission before its retained payload is cleared. Confirmed
+absence also clears the payload, leaving a small receipt. Receipt writes must
+succeed before ingestion acknowledges the candidate; failures never permit a
+new unverified Job.
+
+This rule is prospective. Existing cards retain their status and scores. An
+employer with no verified board keeps the established discovery/intake behavior;
+an already-held candidate cannot use a later missing mapping to bypass the gate.
+Source URLs already identifying a direct ATS posting keep their existing path.
+Preview due candidates with `node --import tsx scripts/retry_aggregator_intake.ts`;
+add `--apply --limit=10` to process them through normal ingestion.
 
 Use `npm run himalayas:resolve-employers -- --company-slug=panopto` for a read-only preview. Dry runs do not persist mappings or advance the cursor. The hourly service adds `--apply --limit=8`; each employer failure is isolated and the applied rotation advances so one miss cannot starve other employers.
 

@@ -154,7 +154,7 @@ import {
   type IngestionCounters,
 } from './ingestionControl';
 
-type IncomingJob = {
+export type IncomingJob = {
   title?: unknown;
   company?: unknown;
   description?: unknown;
@@ -2213,6 +2213,7 @@ export async function resolveExternalDirectAtsPosting(
 export async function ingestExternalJob(
   input: ExternalJobInput,
   initialStatus = 'pending_af',
+  options: Pick<IngestionOptions, 'requireCanonicalMatch' | 'assessAggregatorCandidate'> = {},
 ): Promise<ExternalIngestOutcome> {
   const attribution = {
     searchQuery: input.searchQuery || null,
@@ -2265,12 +2266,36 @@ export async function ingestExternalJob(
     return 'duplicate';
   }
 
-  // External API feeds must have the same employer-link opportunity as the
-  // main collector. Keep the original provider URL on its observation while
-  // matching the new card against the exact ATS posting before deduplication.
+  // External API/browser feeds use the same admission gate as the collector.
+  // Preserve their original route and source URL for a durable retry.
+  let intakeMatch: DirectAtsMatch | null = null;
+  if (isAggregatorSource(input.source) && !boardIdentityFromUrl(url)
+    && !assessJobInfoLanguage({ title, description }).isAffirmativelyNonEnglish) {
+    const { assessAggregatorIntake } = await import('./aggregatorIntake');
+    const decision = await (options.assessAggregatorCandidate || assessAggregatorIntake)(
+      { title, company, description, location, url, source: input.source }, { store: prisma });
+    if (decision.kind === 'pending' || decision.kind === 'expired'
+      || decision.kind === 'unknown_board' && options.requireCanonicalMatch) {
+      const { retainAggregatorCandidate } = await import('./aggregatorIntakeQueue');
+      const reason = decision.kind === 'unknown_board' ? 'no_verified_board' : decision.reason;
+      await retainAggregatorCandidate({ job: { ...input, sourceId }, source: input.source, sourceId,
+        title, company, url: observationUrl, reason, expired: decision.kind === 'expired',
+        context: { ...attribution, route: 'external',
+          ...(decision.kind === 'expired' ? { checkedBoards: decision.boards } : {}) } });
+      await recordJobPipelineEvent({
+        eventType: decision.kind === 'expired' ? 'canonical_intake_expired' : 'canonical_intake_pending',
+        taskId: input.taskId, stage: 'ingestion', source: input.source, sourceId,
+        queryFamily: attribution.queryFamily, geoLane: input.geoLane,
+        details: { reason, title, company, url: observationUrl },
+        identityParts: [input.windowEnd?.toISOString() || 'external'],
+      });
+      return 'filtered';
+    }
+    intakeMatch = decision.kind === 'matched' ? decision.match : null;
+  }
   const resolvedPosting = await resolveExternalDirectAtsPosting({
     title, company, description, location, url, source: input.source,
-  });
+  }, async () => intakeMatch);
   ({ title, description, location, url } = resolvedPosting);
   canonicalUrl = normalizeUrl(url);
   company = await standardizeIncomingCompany({ company, url, canonicalUrl }, prisma);
@@ -2752,6 +2777,11 @@ export async function tryFetchFullDescription(job: {
 }
 
 export interface IngestionOptions {
+  /** Retry retained aggregator arrivals without querying the aggregator again. */
+  prefetchedAggregatorCandidates?: IncomingJob[];
+  requireCanonicalMatch?: boolean;
+  /** Internal dependency boundary for isolated intake verification. */
+  assessAggregatorCandidate?: typeof import('./aggregatorIntake').assessAggregatorIntake;
   useStandard?: boolean;
   usePaidApis?: boolean;
   useCareerforce?: boolean;
@@ -3620,19 +3650,37 @@ export async function ingestJobs(
         })
       : null;
 
-    // An aggregator listing that is still pointing at the aggregator gets one
-    // resolution attempt against the employer's own board: first the ATS
-    // postings already stored for that company, then a live board ping. This
-    // runs for every aggregator, not just the four hosts `isAggregator` covers,
-    // because Jobicy, Himalayas, SerpApi and the rest reprint ATS postings too.
-    // A refusal is the normal outcome and costs the job nothing.
+    // For a known employer, canonical resolution is an admission gate. Keep
+    // unavailable/ambiguous arrivals outside Job and scoring; a complete live
+    // catalogue with no match rejects the stale aggregator arrival.
     if (isAggregatorSource(source) && !boardIdentityFromUrl(finalCanonicalUrl)
       && glassdoorMetadataFilter?.passes !== false && !availableLanguage.isAffirmativelyNonEnglish) {
-      try {
-        const directMatch = await resolveDirectAtsPosting(
+        const { assessAggregatorIntake } = await import('./aggregatorIntake');
+        const decision = await (options.assessAggregatorCandidate || assessAggregatorIntake)(
           { title, company, location, description: finalDescription, url: rawUrl, source },
           { store: prisma },
         );
+        if (decision.kind === 'pending' || decision.kind === 'expired'
+          || decision.kind === 'unknown_board' && options.requireCanonicalMatch) {
+          const { retainAggregatorCandidate } = await import('./aggregatorIntakeQueue');
+          const reason = decision.kind === 'unknown_board' ? 'no_verified_board' : decision.reason;
+          await retainAggregatorCandidate({
+            job: { ...jobData, sourceId: sourceId.toString(), postedAt: postedAt.toISOString() },
+            source, sourceId: sourceId.toString(), title, company, url: rawUrl,
+            reason, expired: decision.kind === 'expired',
+            context: { queryFamily, geoLane: geoLane.id, searchQuery: searchQuery || null,
+              ...(decision.kind === 'expired' ? { checkedBoards: decision.boards } : {}) },
+          });
+          await recordJobPipelineEvent({
+            eventType: decision.kind === 'expired' ? 'canonical_intake_expired' : 'canonical_intake_pending',
+            taskId: options.taskId, stage: 'ingestion', source, sourceId: sourceId.toString(),
+            queryFamily, geoLane: geoLane.id, details: { reason, title, company, url: rawUrl },
+            identityParts: [runIdentity],
+          });
+          stats.filtered++;
+          return 'skipped';
+        }
+        const directMatch = decision.kind === 'matched' ? decision.match : null;
         if (directMatch) {
           directAtsResolved = true;
           finalCanonicalUrl = directMatch.url;
@@ -3652,9 +3700,6 @@ export async function ingestJobs(
           const fullerDescription = selectFullerAtsDescription(finalDescription, directMatch.description);
           if (fullerDescription) finalDescription = fullerDescription;
         }
-      } catch (error: unknown) {
-        console.error('Direct ATS resolution failed in ingestion:', error);
-      }
     }
 
     const isAggregator = isRedirectResolutionAggregatorUrl(rawUrl)
@@ -4096,6 +4141,17 @@ export async function ingestJobs(
         void persistCheckpoint().catch((error) => console.error('Failed to persist ingestion checkpoint:', error));
       }
     });
+  }
+
+  if (options.prefetchedAggregatorCandidates) {
+    let failed = false;
+    for (const candidate of options.prefetchedAggregatorCandidates) {
+      if (signal?.aborted) break;
+      if (await processJob(candidate) === 'error') failed = true;
+    }
+    const inserted = await finishIngestion();
+    if (failed) throw new Error('Retained aggregator candidate processing failed');
+    return inserted;
   }
 
   // BROAD SEARCH

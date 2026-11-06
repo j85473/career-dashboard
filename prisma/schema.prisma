@@ -139,6 +139,34 @@ model Job {
   @@index([createdAt])
 }
 
+/// Aggregator arrivals awaiting employer verification never enter Job/scoring.
+/// Terminal absence retains a small receipt, without retaining a second JD.
+model AggregatorIntakeCandidate {
+  id              String   @id @default(uuid())
+  source          String
+  sourceId        String
+  title           String
+  company         String
+  url             String
+  payload         Json?
+  context         Json?
+  status          String   @default("pending")
+  reason          String
+  nextAttemptAt   DateTime @default(now())
+  attempts        Int      @default(0)
+  leaseToken      String?  @unique
+  leaseExpiresAt  DateTime?
+  lastCheckedAt   DateTime @default(now())
+  lastError       String?
+  jobId           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([source, sourceId])
+  @@index([status, nextAttemptAt])
+  @@index([leaseExpiresAt])
+}
+
 model JobInterview {
   id          String   @id @default(uuid())
   jobId       String

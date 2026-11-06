@@ -77,6 +77,8 @@ export type StoredAtsCatalogue = {
   postings: BoardPosting[]; board: BoardIdentity | null; boards: BoardIdentity[];
   /** Crawl-excluded evidence remains a rival, but needs current confirmation. */
   verificationRequiredUrls?: string[];
+  /** Known but excluded boards cannot authorize admitting an unverified job. */
+  unavailableBoards?: BoardIdentity[];
 };
 
 export type DirectAtsMatch = {
@@ -617,6 +619,8 @@ export type DirectMatchDeps = {
   liveCache?: Map<string, Promise<BoardPosting[] | null>>;
   onOutcome?: (outcome: 'matched_stored' | 'matched_live' | 'no_verified_board'
     | 'no_unique_stored_match' | 'stored_match_requires_live_confirmation' | 'live_unsupported' | 'live_unavailable' | 'no_unique_live_match') => void;
+  /** Only a complete successful live read can establish absence at intake. */
+  onLiveCatalogue?: (evidence: { boards: BoardIdentity[]; postings: BoardPosting[] }) => void;
 };
 
 type DirectMatchStore = Pick<Prisma.TransactionClient, 'job'>
@@ -800,6 +804,8 @@ export async function findStoredAtsPostings(
   const verificationRequiredUrls = candidates.filter(row => row.board && (row.board.platform === 'adp'
     || crawlExcluded.has(`${row.board.platform}:${row.board.slug}`))).map(row => row.url);
   return { postings, board: activeBoards.length === 1 ? activeBoards[0] : null, boards: activeBoards,
+    ...([...boards.entries()].some(([key]) => !enabled.has(key))
+      ? { unavailableBoards: [...boards.entries()].filter(([key]) => !enabled.has(key)).map(([, value]) => value) } : {}),
     ...(verificationRequiredUrls.length ? { verificationRequiredUrls } : {}) };
 }
 
@@ -969,6 +975,7 @@ export async function resolveDirectAtsPostingFromCatalogue(
   }
   const live = await pending;
   if (live === null) { deps.onOutcome?.('live_unavailable'); return null; }
+  deps.onLiveCatalogue?.({ boards, postings: live });
   // A newer live catalogue cannot erase a different saved requisition and
   // manufacture uniqueness. Only explicit source/req evidence can choose it.
   const liveMatch = selectDirectAtsMatch(job, [...live, ...stored]);

@@ -39,6 +39,8 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'same_job_consolidated',
   'same_job_exception',
   'inbox_posting_verified',
+  'canonical_intake_pending',
+  'canonical_intake_expired',
 ] as const;
 
 export type JobPipelineEventType = typeof JOB_PIPELINE_EVENT_TYPES[number];

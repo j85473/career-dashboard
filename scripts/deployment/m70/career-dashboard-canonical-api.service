@@ -14,13 +14,14 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/var/lib/career-dashboard
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
-# Stored matches have their own larger budget and cursor. Slow or unavailable
-# employer APIs cannot consume the stored-match budget.
+# Retained arrivals retry without rerunning aggregator searches. Stored repairs
+# retain a separate larger budget and cursor from the live repair pass.
+ExecStartPre=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/retry_aggregator_intake.ts --apply --limit=10
 ExecStartPre=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply --links-only --active-only --stored-only --max-jobs=250 --cursor-path=data/runtime/canonical-stored-cursor.json
 ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply --links-only --active-only --max-jobs=25 --cursor-path=data/runtime/canonical-api-cursor.json
 # Includes complete 30-second catalogues and bounded source/site recovery.
-# Leave room for 25 live candidates, including alias verification and DB reads.
-TimeoutStartSec=40min
+# Leave room for 10 retained arrivals and 25 live repairs, including DB reads.
+TimeoutStartSec=50min
 NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077
