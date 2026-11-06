@@ -222,6 +222,35 @@ test('a database blip does not read as a stop request', async () => {
   assert.equal(await state.pipelineStopRequested(client, Date.now() + 60_000), false);
 });
 
+test('storage holds stop inner work without ending supervisors, and an operator Stop still wins', async () => {
+  const state = await loadState();
+  const statusFile = path.join(directory, 'storage-pressure.json');
+  const originalFile = process.env.CAREER_STORAGE_STATUS_FILE;
+  const originalPath = process.env.CAREER_STORAGE_TEST_PATH;
+  process.env.CAREER_STORAGE_STATUS_FILE = statusFile;
+  process.env.CAREER_STORAGE_TEST_PATH = directory;
+  fs.writeFileSync(statusFile, JSON.stringify({
+    version: 1,
+    checkedAt: new Date().toISOString(),
+    level: 'maintenance',
+    collectionPaused: true,
+    backgroundPaused: true,
+  }));
+  try {
+    const now = Date.now() + 120_000;
+    const running = fakeClient({ isRunning: true });
+    assert.equal(await state.pipelineStopRequested(running.client, now), true);
+    assert.equal(await state.pipelineOperatorStopRequested(running.client, now), false);
+    const stopped = fakeClient({ isRunning: false, schedulePaused: true, pausedUntil: null });
+    assert.equal(await state.pipelineOperatorStopRequested(stopped.client, now + 10_000), true);
+  } finally {
+    if (originalFile === undefined) delete process.env.CAREER_STORAGE_STATUS_FILE;
+    else process.env.CAREER_STORAGE_STATUS_FILE = originalFile;
+    if (originalPath === undefined) delete process.env.CAREER_STORAGE_TEST_PATH;
+    else process.env.CAREER_STORAGE_TEST_PATH = originalPath;
+  }
+});
+
 test('an older asynchronous mirror cannot overwrite a newer terminal state', async () => {
   const state = await loadState();
   const { state: store, client } = fakeClient();

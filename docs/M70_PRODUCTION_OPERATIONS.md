@@ -491,6 +491,14 @@ Hourly samples retain 30 days of history; a growth forecast appears only after
 at least a day of observations. The status endpoint is `/api/storage` and the
 independent timer is `career-dashboard-storage-monitor.timer`.
 
+The pipeline retains its worker supervisors through a storage hold and checks
+for recovery every five seconds. Local screening, description extraction, ATS
+persistence and telemetry resume automatically when background work is allowed
+again, including when an inner worker has already yielded. The ticker reports
+the storage pause while it is in force. Operator Stop and deployment quiescence
+still end the workers and preserve the existing schedule/pause settings. No job,
+score, retry date or saved crawl position is reset by this recovery behavior.
+
 New v2 ingestion items reference their immutable posting observation instead of
 storing its JSON a second time. Readers verify the reference and content hash.
 Older inline items remain readable; no existing scores or raw evidence are

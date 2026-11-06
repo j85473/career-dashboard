@@ -7,6 +7,7 @@ import { isScheduledPipelineRequest } from '@/lib/apiAuth';
 import { controlPrisma } from '@/lib/controlPrisma';
 import { prisma } from '@/lib/prisma';
 import {
+  pipelineOperatorStopRequested,
   pipelineStopRequested,
   registerActivePipelineAbortController,
   startPipelineLockHeartbeat,
@@ -14,6 +15,7 @@ import {
   updatePipelineState,
   waitForPipelineDelay,
 } from '@/lib/pipelineState';
+import { supervisePipelineLoop } from '@/lib/pipelineLoopSupervisor';
 import { readDurableIngestionState, writeDurableIngestionState } from '@/lib/ingestionState';
 import { reapAbandonedIngestionRuns } from '@/lib/ingestionRunReaper';
 import { buildTerminalJdRecoveryUpdate } from '@/lib/jdRecoveryPolicy';
@@ -167,7 +169,9 @@ async function orchestratePipeline(releaseLock: () => void) {
     
     const updateCombinedTicker = () => {
       updatePipelineState({
-        currentStep: 'Pipeline Active (Concurrent)',
+        currentStep: readStoragePressure().backgroundPaused
+          ? 'Pipeline Paused (Storage)'
+          : 'Pipeline Active (Concurrent)',
         stepProgress: `${latestIngestion} | ${latestBoardCollection} | ${latestAtsAcquisition} | ${latestBackpressure} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
       });
     };
@@ -470,7 +474,6 @@ async function orchestratePipeline(releaseLock: () => void) {
      * stop sealed segments from reaching the normalization/persistence loop.
      */
     const runAtsSegmentPublicationLoop = async () => {
-      if (!ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED) return;
       await assertAtsV2AuthorityActive();
       await runAtsV2ContinuousPublisher({
         signal: ac.signal,
@@ -1150,28 +1153,17 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     updatePipelineState({ currentStep: 'Evaluating', stepProgress: 'Starting concurrent evaluation phases...' });
     
-    // Each loop is supervised on its own. Previously these were joined with
-    // Promise.all, so the first one to throw rejected the join and took the
-    // other three down with it — a provider error could stop local scoring, JD
-    // extraction and lease cleanup, none of which it had anything to do with.
-    // Restarts are unbounded on purpose: a permanently dead loop is the exact
-    // failure being removed, and the backoff caps the cost of a hot one.
-    const superviseLoop = async (name: string, loopFn: () => Promise<void>) => {
-      let consecutiveFailures = 0;
-      while (true) {
-        if (ac.signal.aborted || await pipelineStopRequested()) return;
-        try {
-          await loopFn();
-          return; // A clean return means the loop saw the stop itself.
-        } catch (error) {
-          if (ac.signal.aborted) return;
-          consecutiveFailures++;
-          recordWarning(`${name} loop (restart ${consecutiveFailures})`, error);
-          const backoffMs = Math.min(60_000, 1_000 * 2 ** Math.min(consecutiveFailures - 1, 6));
-          await waitForPipelineDelay(backoffMs, ac.signal);
-        }
-      }
-    };
+    // Storage checks still make inner loops yield without claiming more work.
+    // Their supervisors retain ownership and restart them when the hold clears;
+    // only a real Stop or deployment quiesce permanently ends the lane.
+    const superviseLoop = (name: string, loopFn: () => Promise<void>) => supervisePipelineLoop(loopFn, {
+      signal: ac.signal,
+      shouldStop: pipelineOperatorStopRequested,
+      canRun: () => !readStoragePressure().backgroundPaused,
+      wait: waitForPipelineDelay,
+      onError: (error, consecutiveFailures) => recordWarning(`${name} loop (restart ${consecutiveFailures})`, error),
+      onStoragePauseChange: () => updateCombinedTicker(),
+    });
 
     /**
      * When acquisition runs on a remote host this process spawns no child, so
@@ -1232,7 +1224,9 @@ async function orchestratePipeline(releaseLock: () => void) {
       superviseLoop('ATS Batch Processing', runAtsBatchProcessingLoop),
       // Publication must stay live even when the Pi reserves zero acquisition
       // slots and its attached ATS acquisition child deliberately stands down.
-      superviseLoop('ATS Segment Publication', runAtsSegmentPublicationLoop),
+      ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED
+        ? superviseLoop('ATS Segment Publication', runAtsSegmentPublicationLoop)
+        : Promise.resolve(),
       superviseLoop('Local Scoring', runLocalScoringLoop),
       superviseLoop('Duplicate combining', runSameJobConsolidationLoop),
       superviseLoop('JD Extraction', runJDExtraction),

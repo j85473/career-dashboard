@@ -407,6 +407,14 @@ export async function pipelineStopRequested(
   now: number = Date.now(),
 ): Promise<boolean> {
   if (!storageAllows('background')) return true;
+  return pipelineOperatorStopRequested(client, now);
+}
+
+/** Supervisors wait through storage holds but still obey operator/deployment stops. */
+export async function pipelineOperatorStopRequested(
+  client: PipelineStateClient = controlPrisma,
+  now: number = Date.now(),
+): Promise<boolean> {
   if (stopCheckCache && now - stopCheckCache.at < 3_000) return !stopCheckCache.running;
   try {
     const row = await client.pipelineState.findUnique({

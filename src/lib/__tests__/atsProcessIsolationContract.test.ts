@@ -15,7 +15,10 @@ test('pipeline route supervises exactly one isolated acquisition launcher and al
   assert.match(route, /export const runtime = 'nodejs'/);
   assert.equal(route.match(/runAtsAcquisitionWorkerProcess\(\{/g)?.length, 1);
   assert.match(route, /superviseLoop\('ATS Acquisition Process', runAtsAcquisitionProcess\)/);
-  assert.match(route, /await loopFn\(\)/);
+  assert.match(route, /supervisePipelineLoop\(loopFn,/);
+  assert.match(route, /shouldStop: pipelineOperatorStopRequested/);
+  assert.match(route, /canRun: \(\) => !readStoragePressure\(\)\.backgroundPaused/);
+  assert.match(readFileSync(path.resolve(process.cwd(), 'src/lib/pipelineLoopSupervisor.ts'), 'utf8'), /await runLoop\(\)/);
   assert.match(route, /let latestBackpressure = ATS_SPLIT_INGESTION_ENABLED/);
   assert.match(route, /\$\{latestAtsAcquisition\} \| \$\{latestBackpressure\} \| \$\{latestAtsProcessing\}/);
   assert.match(route, /onBackpressure: \(_pid, telemetry\) =>/);
