@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import './globals.css';
 import { GlobalModal } from '@/components/GlobalModal';
-import { StorageNotice } from '@/components/StorageNotice';
 
 export const metadata: Metadata = {
   title: 'Career Dashboard',
@@ -17,7 +16,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <StorageNotice />
         {children}
         <GlobalModal />
       </body>
