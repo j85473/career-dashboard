@@ -10,7 +10,7 @@ export type AggregatorIntakeDecision =
 /** Known employer boards are an admission check, not optional enrichment. */
 export async function assessAggregatorIntake(job: DirectMatchJob, deps: DirectMatchDeps): Promise<AggregatorIntakeDecision> {
   try {
-    const catalogue = await findStoredAtsPostings(job.company, deps.store, [job]);
+    const catalogue = await findStoredAtsPostings(job.company, deps.store, [job], { includeRetiredBoards: true });
     let outcome: string = 'lookup_inconclusive';
     let completed: { boards: BoardIdentity[]; postings: BoardPosting[] } | undefined;
     const match = await resolveDirectAtsPostingFromCatalogue(job, catalogue, {

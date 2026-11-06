@@ -59,10 +59,15 @@ test('several live requisitions stay pending rather than choosing one or declari
   assert.deepEqual(result, { kind: 'pending', reason: 'no_unique_live_match' });
 });
 
-test('unknown employers stay distinct from known excluded boards', async () => {
+test('retired boards are checked on demand while genuinely unknown employers remain distinct', async () => {
   const fetcher = async () => { throw new Error('No active board to request'); };
   assert.deepEqual(await assessAggregatorIntake(job, { store: store([], false), fetcher }), { kind: 'unknown_board' });
-  assert.deepEqual(await assessAggregatorIntake(job, { store: store([], true, true), fetcher }), { kind: 'pending', reason: 'employer_board_excluded' });
+  let calls = 0;
+  const result = await assessAggregatorIntake(job, { store: store([], true, true), fetcher: async () => { calls++; return response([posting]); } });
+  assert.equal(calls, 1); assert.equal(result.kind, 'matched');
+  if (result.kind === 'matched') assert.equal(result.match.matchedVia, 'live');
+  assert.equal((await assessAggregatorIntake(job, { store: store([], true, true), fetcher: async () => response([]) })).kind, 'expired');
+  assert.deepEqual(await assessAggregatorIntake(job, { store: store([], true, true), fetcher }), { kind: 'pending', reason: 'live_unavailable' });
 });
 
 test('an unavailable second employer board prevents a false expiry', async () => {
@@ -75,7 +80,16 @@ test('an unavailable second employer board prevents a false expiry', async () =>
       { platform: 'greenhouse', slug: 'legacy', status: 'excluded', excludedReason: 'permanent_retirement:test' },
     ] },
   } as never;
-  assert.equal((await assessAggregatorIntake(job, { store: fake, fetcher: async () => response([]) })).kind, 'pending');
+  const fetcher = async (url: string | URL) => String(url).includes('/legacy/') ? new Response('', { status: 503 }) : response([]);
+  assert.equal((await assessAggregatorIntake(job, { store: fake, fetcher })).kind, 'pending');
+});
+
+test('retired saved postings cannot bypass the targeted live check or reactivate collection', async () => {
+  const saved = { id: 'one', title: job.title, company: job.company, source: 'ATS-greenhouse',
+    url: posting.absolute_url, canonicalUrl: posting.absolute_url, location: 'USA', description: 'Employer job description', observations: [] };
+  const result = await assessAggregatorIntake(job, { store: store([saved], true, true), fetcher: async () => response([]) });
+  assert.equal(result.kind, 'expired');
+  // The fake store exposes reads only: an attempted registry write would fail.
 });
 
 test('pending intake is durable without a Job write; absence discards the retained JD', async () => {

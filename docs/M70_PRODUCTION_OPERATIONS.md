@@ -690,7 +690,13 @@ verified match supplies the canonical URL and goes through normal deduplication.
 A complete successful catalogue with no compatible posting rejects the arrival
 and records `canonical_intake_expired`; it creates no Job or scoring work.
 
-Unavailable, unsupported, incomplete, excluded or ambiguous known boards retain
+Retired/excluded boards remain eligible for a targeted check when an aggregator
+arrival or retained arrival needs verification. This does not reactivate their
+routine crawl schedule. A failed read stays pending; a complete live read may
+match or establish absence. Explicitly retired saved postings cannot authorize
+admission without that live check.
+
+Unavailable, unsupported, incomplete or ambiguous known boards retain
 the arrival in `AggregatorIntakeCandidate`, outside the dashboard and scoring.
 The canonical API service retries up to 10 due candidates per pass with an atomic
 lease and backoff from 10 minutes to six hours, checking the operator's pipeline

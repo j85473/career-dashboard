@@ -656,7 +656,7 @@ export async function findStoredAtsPostings(
   company: string,
   store: DirectMatchStore,
   matchJobs?: readonly DirectMatchJob[],
-  options: { linksOnly?: boolean } = {},
+  options: { linksOnly?: boolean; includeRetiredBoards?: boolean } = {},
 ): Promise<StoredAtsCatalogue> {
   const { rules, index } = await employerRules(store);
   const employer = resolveEmployer({ company }, index);
@@ -787,7 +787,9 @@ export async function findStoredAtsPostings(
   const registered = store.atsCompany && boards.size ? await store.atsCompany.findMany({
     where: { OR: [...boards.values()] }, select: { platform: true, slug: true, status: true, excludedReason: true },
   }) : null;
-  const enabled = registered ? new Set(registered.filter(row => row.status !== 'excluded')
+  // A targeted aggregator check may call a retired board without changing its
+  // collection status. Historical retirement evidence still needs a live read.
+  const enabled = registered ? new Set(registered.filter(row => row.status !== 'excluded' || options.includeRetiredBoards)
     .map(row => `${row.platform}:${row.slug}`)) : new Set(boards.keys());
   const activeBoards = [...boards.entries()].filter(([key]) => enabled.has(key)).map(([, value]) => value);
   // Crawl yield/geography is not evidence that a saved requisition is invalid.
