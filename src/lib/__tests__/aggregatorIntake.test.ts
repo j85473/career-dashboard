@@ -80,7 +80,7 @@ test('pending intake is durable without a Job write; absence discards the retain
 test('retry leases prevent double admission and retain failures for a later attempt', async () => {
   for (const claim of [0, 1]) {
     let calls = 0; const updates: any[] = [];
-    const fake = { aggregatorIntakeCandidate: {
+    const fake = { pipelineState: { findUnique: async () => null }, aggregatorIntakeCandidate: {
       findMany: async () => [{ id: 'candidate', source: 'Himalayas', sourceId: '123', payload: job, attempts: 1 }],
       updateMany: async (args: any) => { updates.push(args); return { count: claim }; },
       findUnique: async () => ({ status: 'pending' }),
@@ -93,7 +93,7 @@ test('retry leases prevent double admission and retain failures for a later atte
 
 test('a successful retry retires its payload only after a real source observation exists', async () => {
   const updates: any[] = [];
-  const fake = { aggregatorIntakeCandidate: {
+  const fake = { pipelineState: { findUnique: async () => null }, aggregatorIntakeCandidate: {
     findMany: async () => [{ id: 'candidate', source: 'Himalayas', sourceId: '123', payload: job, attempts: 0 }],
     updateMany: async (args: any) => { updates.push(args); return { count: 1 }; }, findUnique: async () => ({ status: 'pending' }),
   }, jobSourceObservation: { findUnique: async () => ({ jobId: 'real-job' }) } } as never;
@@ -102,4 +102,25 @@ test('a successful retry retires its payload only after a real source observatio
   const now = new Date('2026-11-06T00:00:00Z');
   assert.equal(aggregatorIntakeRetryAt(1, now).getTime() - now.getTime(), 600_000);
   assert.equal(aggregatorIntakeRetryAt(100, now).getTime() - now.getTime(), 21_600_000);
+});
+
+test('scheduled retries honor indefinite and timed pauses, including a pause between candidates', async () => {
+  for (const mode of ['indefinite', 'timed', 'expired', 'between']) {
+    let checks = 0, claims = 0;
+    const fake = {
+      pipelineState: { findUnique: async () => {
+        checks++;
+        return { schedulePaused: true, pausedUntil: mode === 'indefinite' || mode === 'between' && checks > 1
+          ? null : new Date(Date.now() + (mode === 'timed' ? 60_000 : -60_000)) };
+      } },
+      aggregatorIntakeCandidate: {
+        findMany: async () => [1, 2].map(id => ({ id: String(id), source: 'Himalayas', sourceId: String(id), payload: job, attempts: 0 })),
+        updateMany: async (args: any) => { if (args.data.attempts) claims++; return { count: 1 }; },
+        findUnique: async () => ({ status: 'pending' }),
+      }, jobSourceObservation: { findUnique: async () => null },
+    } as never;
+    const result = await retryAggregatorCandidates({ limit: 2, ingest: async () => {} }, fake);
+    const expected = mode === 'expired' ? 2 : mode === 'between' ? 1 : 0;
+    assert.equal(claims, expected, mode); assert.equal(result.attempted, expected, mode);
+  }
 });

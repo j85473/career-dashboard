@@ -36,6 +36,11 @@ export async function retryAggregatorCandidates(input: {
   });
   const result = { attempted: 0, released: 0, pending: 0, expired: 0 };
   for (const candidate of candidates) {
+    // This worker can admit new Jobs, so a paused pipeline must not be
+    // bypassed by the independent canonical-repair timer. Recheck each claim.
+    const pause = await store.pipelineState.findUnique({ where: { id: 'global' },
+      select: { schedulePaused: true, pausedUntil: true } });
+    if (pause?.schedulePaused && (!pause.pausedUntil || pause.pausedUntil > new Date())) break;
     const token = randomUUID();
     const claimed = await store.aggregatorIntakeCandidate.updateMany({
       where: { id: candidate.id, ...available },

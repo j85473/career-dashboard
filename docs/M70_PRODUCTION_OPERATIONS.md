@@ -693,7 +693,8 @@ and records `canonical_intake_expired`; it creates no Job or scoring work.
 Unavailable, unsupported, incomplete, excluded or ambiguous known boards retain
 the arrival in `AggregatorIntakeCandidate`, outside the dashboard and scoring.
 The canonical API service retries up to 10 due candidates per pass with an atomic
-lease and backoff from 10 minutes to six hours. It preserves the original payload,
+lease and backoff from 10 minutes to six hours, checking the operator's pipeline
+pause before each claim. It preserves the original payload,
 source URL and ingestion route. Failed retries remain retained. A real source
 observation confirms admission before its retained payload is cleared. Confirmed
 absence also clears the payload, leaving a small receipt. Receipt writes must
