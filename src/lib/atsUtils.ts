@@ -7,7 +7,7 @@ import { isZohoRecruitHost } from './zohoRecruitHost';
 export const ATS_OPTIONS = [
   'Symphony Talent', 'Jobvite', 'Freshteam', 'CATS', 'Kula',
   'Gem', 'JobScore', 'JazzHR', 'Manatal', 'ClearCompany', 'HireHive', 'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Eightfold', 'Greenhouse',
-  'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycor', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
+  'Gusto', 'Hireology', 'Dover', 'Trakstar Hire', 'Prevue APS', 'HiringThing', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycor', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
   'UKG', 'Umantis', 'Unknown', 'Workable', 'Workday', 'Zoho Recruit', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
@@ -57,6 +57,11 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('greenhouse.io') || parsedUrl?.searchParams.has('gh_jid')) return 'Greenhouse';
   if (/\.eightfold(?:-(?:eu|ca|ap|me|wu|gov))?\.ai$/.test(host)) return 'Eightfold';
   if (host === 'jobs.gusto.com') return 'Gusto';
+  if (host === 'careers.hireology.com') return 'Hireology';
+  if (host === 'app.dover.com') return 'Dover';
+  if (host.endsWith('.hire.trakstar.com')) return 'Trakstar Hire';
+  if (host.endsWith('.prevueaps.com')) return 'Prevue APS';
+  if (host.endsWith('.prismhr-hire.com') || host.endsWith('.hiringthing.com')) return 'HiringThing';
   if (hasHost('lever.co')) return 'Lever';
   if (hasHost('ashbyhq.com')) return 'Ashby';
   if (hasHost('comeet.com', 'comeet.co')) return 'Comeet';

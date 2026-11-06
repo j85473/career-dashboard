@@ -2,12 +2,14 @@ import { atsBoardRequest, boardIdentityFromUrl, parseBoardPostings, type BoardId
 import { cleanHtmlText, fetchAtsPlatformResponse } from './jobIngestion';
 import { reserveProviderBudgetForSource } from './ingestionControl';
 import { safeExternalFetch } from './safeExternalFetch';
-import { fetchWorkdayMatchPostings } from './workdayDirectMatch';
+import { fetchWorkdayMatchPostings, fetchWorkdayStoredAliases, type WorkdayMatchJob } from './workdayDirectMatch';
 import { parseZohoRecruitListing } from './zohoRecruitBoard';
+import { readAdditionalEmployerCatalogue, supportsAdditionalEmployerCatalogue } from './employerCatalogueReaders';
 
 export function supportsEmployerBoardLookup(platform: string): boolean {
   return ['workday', 'lever', 'greenhouse', 'ashby', 'recruitee', 'breezy', 'bamboohr',
-    'smartrecruiters', 'workable', 'teamtailor', 'pinpoint', 'zohorecruit'].includes(platform);
+    'smartrecruiters', 'workable', 'teamtailor', 'pinpoint', 'zohorecruit'].includes(platform)
+    || supportsAdditionalEmployerCatalogue(platform);
 }
 
 /** Complete public catalogues only: a partial page cannot prove a unique job. */
@@ -16,22 +18,27 @@ export async function fetchEmployerBoardPostings(
   fetcher: typeof safeExternalFetch = safeExternalFetch,
   timeoutMs = 15_000,
   parentSignal?: AbortSignal,
-  job?: { title: string; company: string },
+  job?: WorkdayMatchJob,
 ): Promise<BoardPosting[] | null> {
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = parentSignal ? AbortSignal.any([timeoutSignal, parentSignal]) : timeoutSignal;
-  const read = async (url: string | URL, init?: RequestInit) => {
+  const readResponse = async (url: string | URL, init?: RequestInit) => {
     const request = async () => {
       if (fetcher === safeExternalFetch) {
         const decision = await reserveProviderBudgetForSource(`ATS-${board.platform}`);
         if (!decision.allowed) throw new Error('Employer lookup deferred by provider controls');
       }
-      return fetcher(String(url), { ...init, headers: { ...init?.headers, Accept: 'application/json' }, signal });
+      return fetcher(String(url), { ...init, signal });
     };
     const response = fetcher === safeExternalFetch
       ? await fetchAtsPlatformResponse(board.platform, signal, request, { requestedUrl: String(url) })
       : await request();
-    if (!response.ok || !/json/i.test(response.headers.get('content-type') || '')) throw new Error('Employer catalogue unavailable');
+    if (!response.ok) throw new Error('Employer catalogue unavailable');
+    return response;
+  };
+  const read = async (url: string | URL, init?: RequestInit) => {
+    const response = await readResponse(url, { ...init, headers: { ...init?.headers, Accept: 'application/json' } });
+    if (!/json/i.test(response.headers.get('content-type') || '')) throw new Error('Employer catalogue unavailable');
     if (response.url) {
       const expected = new URL(url);
       const actual = new URL(response.url);
@@ -43,7 +50,11 @@ export async function fetchEmployerBoardPostings(
   };
   const postings = new Map<string, BoardPosting>();
   try {
-    if (board.platform === 'workday') return job ? await fetchWorkdayMatchPostings(board.slug, job, read) : null;
+    if (board.platform === 'workday') return job
+      ? job.storedAliases ? await fetchWorkdayStoredAliases(job, read) : await fetchWorkdayMatchPostings(board.slug, job, read) : null;
+    if (board.platform !== 'zohorecruit' && supportsAdditionalEmployerCatalogue(board.platform)) {
+      return await readAdditionalEmployerCatalogue(board, readResponse, job);
+    }
     if (!supportsEmployerBoardLookup(board.platform)) return null;
     const request = atsBoardRequest(board.platform, board.slug);
     if (!request) return null;

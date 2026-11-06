@@ -679,6 +679,8 @@ For rack work that requires disconnecting power, first run `sudo shutdown -h now
 
 The canonical resolver keeps the existing aggregator API pass and licensed browser fallback. Between them, a bounded employer-discovery pass reads the official website from Himalayas public MCP, follows employer-owned careers pages, and checks complete public catalogues from Lever, Greenhouse, Ashby, Recruitee, Breezy, and BambooHR. Unsupported, unreadable, truncated, or ambiguous catalogues defer the employer. This pass changes only verified application links; descriptions, scores, card status, application history, and duplicate-card decisions are untouched. Verified mappings use the exact Himalayas company slug and do not alter global employer-name rules. Permanently retired boards remain retired.
 
+The November 6 follow-up also adds source recovery to the ordinary API pass after a catalogue miss. It checks published Apply controls and source-provided official employer websites, with a 25-second per-candidate bound and a 30-minute service timeout. Validated public acquisition readers are shared with canonical recovery; crawl-excluded historical postings remain ambiguity evidence without reactivating their boards. See [the remaining-gap audit](AGGREGATOR_MATCHING_GAPS_2026-11-06.md) for provider details, source-access limits and per-job evidence.
+
 Use `npm run himalayas:resolve-employers -- --company-slug=panopto` for a read-only preview. Dry runs do not persist mappings or advance the cursor. The hourly service adds `--apply --limit=8`; each employer failure is isolated and the applied rotation advances so one miss cannot starve other employers.
 
 ### Canonical recovery diagnostics (November 6, 2026)

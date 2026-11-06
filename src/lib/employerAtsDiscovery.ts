@@ -8,12 +8,14 @@ import {
 } from './atsDirectMatch';
 import { fetchEmployerBoardPostings } from './employerBoardPostings';
 import { safeExternalFetch } from './safeExternalFetch';
+import { canUseBrowserAtsHttp } from './browserAtsHttp';
 
 const CAREER_LINK = /(?:career|jobs?|join[-_ ]?(?:us|our[-_ ]team)|opportunit|work[-_ ]?with)/i;
 const MAX_EMPLOYER_PAGES = 8;
 
 export type EmployerDiscoveryJob = {
   title: string;
+  company?: string;
   location?: string | null;
   description?: string | null;
   source?: string | null;
@@ -182,10 +184,20 @@ export async function discoverEmployerBoards(input: {
   const catalogues: EmployerBoardDiscovery[] = [];
   for (const candidate of candidates.values()) {
     if (signal.aborted) return [];
-    const postings = await fetchEmployerBoardPostings(candidate.board, fetcher, timeoutMs, signal);
+    // Workday exposes title-scoped CXS searches. Every input title must have a
+    // complete search, with the employer supplied to verify detail branding.
+    const searches = candidate.board.platform === 'workday' || candidate.board.platform === 'adp' || canUseBrowserAtsHttp(candidate.board.platform)
+      ? input.jobs.map(job => job.company ? { title: job.title, company: job.company } : undefined)
+      : [undefined];
+    const collected: BoardPosting[] = [];
+    for (const job of searches) {
+      const postings = await fetchEmployerBoardPostings(candidate.board, fetcher, timeoutMs, signal, job);
+      if (postings === null) return [];
+      collected.push(...postings);
+    }
     // An unreadable or unsupported linked board may carry another matching
     // requisition. Defer the employer instead of guessing from partial proof.
-    if (postings === null) return [];
+    const postings = [...new Map(collected.map(posting => [posting.url, posting])).values()];
     catalogues.push({ ...candidate, postings, matchCount: 0 });
   }
   const allPostings = catalogues.flatMap((catalogue) => catalogue.postings);

@@ -14,6 +14,8 @@ import {
 } from '../src/lib/atsDirectMatch';
 import { rotatingCandidateIds } from '../src/lib/himalayasBrowserResolver';
 import { canonicalRecoveryCheckpoint, selectCanonicalRecoveryIds } from '../src/lib/canonicalRecoverySelection';
+import { recoverAggregatorSource, sourceRecoveryCache, type SourceRecoveryResult } from '../src/lib/aggregatorSourceRecovery';
+import { isPermanentAtsBoardRetirement, recordDiscoveredAtsBoard } from '../src/lib/atsBoardDiscovery';
 
 /**
  * Points existing aggregator listings at the employer's own ATS posting.
@@ -80,6 +82,30 @@ function parseArguments(argv: string[]): Options {
 
 const BOARD_TIMEOUT_MS = 15_000;
 
+async function retainSourceDiscovery(company: string, recovery: SourceRecoveryResult, apply: boolean): Promise<boolean> {
+  if (!recovery.discoveries || !recovery.match || !recovery.website) return true;
+  for (const discovery of recovery.discoveries) {
+    const registered = await prisma.atsCompany.findMany({ where: { platform: discovery.board.platform,
+      slug: { equals: discovery.board.slug, mode: 'insensitive' } }, select: { status: true, excludedReason: true } });
+    const retired = registered.some(isPermanentAtsBoardRetirement);
+    if (retired && discovery.postings.some(posting => posting.url === recovery.match!.url)) return false;
+    if (!apply || retired || !discovery.matchCount) continue;
+    const persisted = await prisma.$transaction(async tx => {
+      if (await recordDiscoveredAtsBoard(tx, discovery.board, new Date(), {
+        jobsFound: discovery.postings.length, reactivateExisting: false,
+      }) === 'retired') return false;
+      const employerKey = `source:${employerAliasKey(company)}`;
+      const data = { companyName: company, officialWebsite: recovery.website!, evidenceUrl: discovery.evidenceUrl,
+        discoverySource: 'aggregator_source_official_site', verifiedAt: new Date() };
+      await tx.employerAtsBoard.upsert({ where: { employerKey_slug_platform: { employerKey, ...discovery.board } },
+        create: { employerKey, ...discovery.board, ...data }, update: data });
+      return true;
+    });
+    if (!persisted && discovery.postings.some(posting => posting.url === recovery.match!.url)) return false;
+  }
+  return true;
+}
+
 async function main(): Promise<void> {
   const startedAt = new Date();
   const { apply, linksOnly, activeOnly, storedOnly, limit, maxJobs, jobId, company, cursorPath, reportPath } = parseArguments(process.argv.slice(2));
@@ -124,9 +150,10 @@ async function main(): Promise<void> {
 
   let boardsKnown = 0;
   const liveCache = new Map<string, Promise<BoardPosting[] | null>>();
+  const sourceCache = sourceRecoveryCache();
   const outcomes: Record<string, number> = {};
   const attempts: Array<{ jobId: string; company: string; source: string | null; outcome: string;
-    fromUrl?: string | null; toUrl?: string; applied?: boolean; error?: string }> = [];
+    fromUrl?: string | null; toUrl?: string; applied?: boolean; error?: string; catalogueOutcome?: string }> = [];
   let matchedStored = 0;
   let matchedLive = 0;
   let written = 0;
@@ -174,7 +201,7 @@ async function main(): Promise<void> {
 
       const catalogue = await findStoredAtsPostings(group[0].company, prisma, group, { linksOnly });
       if (catalogue.boards.length) boardsKnown += 1;
-      if (!catalogue.boards.length && catalogue.postings.length === 0) {
+      if (storedOnly && !catalogue.boards.length && catalogue.postings.length === 0) {
         for (const job of group) attempts.push({ jobId: job.id, company: job.company, source: job.source,
           outcome: 'no_stored_match_or_known_board' });
         continue;
@@ -184,10 +211,18 @@ async function main(): Promise<void> {
         const attempt = { jobId: job.id, company: job.company, source: job.source, outcome: 'lookup_inconclusive',
           fromUrl: job.url } as (typeof attempts)[number];
         attempts.push(attempt);
-        const match = await resolveDirectAtsPostingFromCatalogue(job, catalogue, {
+        let match = await resolveDirectAtsPostingFromCatalogue(job, catalogue, {
           store: prisma, allowLivePing: !storedOnly, timeoutMs: BOARD_TIMEOUT_MS, liveCache,
           onOutcome: outcome => { attempt.outcome = outcome; },
         });
+        if (!match && !storedOnly) {
+          attempt.catalogueOutcome = attempt.outcome;
+          const recovery = await recoverAggregatorSource({ ...job,
+            company: resolveEmployer({ company: job.company }, index) }, { cache: sourceCache, competingPostings: catalogue.postings });
+          attempt.outcome = recovery.outcome;
+          if (recovery.match && await retainSourceDiscovery(job.company, recovery, apply)) match = recovery.match;
+          else if (recovery.match) attempt.outcome = 'discovered_board_retired';
+        }
         if (!match) continue;
         const via = match.matchedVia;
         if (via === 'stored') matchedStored += 1;
@@ -230,7 +265,7 @@ async function main(): Promise<void> {
   console.log(`  companies whose board we can identify: ${boardsKnown.toLocaleString()}`);
   console.log(`  live employer lookups:                 ${liveCache.size.toLocaleString()}`);
   console.log(`  matched from stored ATS postings:      ${matchedStored.toLocaleString()}`);
-  console.log(`  matched from a live board ping:        ${matchedLive.toLocaleString()}\n`);
+  console.log(`  matched from live employer/source:     ${matchedLive.toLocaleString()}\n`);
   if (failedCompanies) console.log(`  employer lookups deferred to the next rotation: ${failedCompanies}`);
   console.log(`  outcomes: ${JSON.stringify(outcomes)}`);
   const destination = reportPath || (apply && cursorPath ? `${cursorPath}.report.json` : null);

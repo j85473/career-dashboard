@@ -54,6 +54,8 @@ import { workdayBoardSlugFromJobUrl } from './atsBoardYield';
 import { reserveProviderBudgetForSource } from './ingestionControl';
 import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardRequest, parseZohoRecruitListing } from './zohoRecruitBoard';
 import { fetchEmployerBoardPostings, supportsEmployerBoardLookup } from './employerBoardPostings';
+import { adpPostingsConflict } from './adpPostingIdentity';
+import { workdayAliasCandidates } from './workdayDirectMatch';
 
 export { locationsCompatibleForDirectMatch } from './directMatchLocation';
 
@@ -73,6 +75,8 @@ export type DirectMatchJob = {
 
 export type StoredAtsCatalogue = {
   postings: BoardPosting[]; board: BoardIdentity | null; boards: BoardIdentity[];
+  /** Crawl-excluded evidence remains a rival, but needs current confirmation. */
+  verificationRequiredUrls?: string[];
 };
 
 export type DirectAtsMatch = {
@@ -94,6 +98,18 @@ const NON_AGGREGATOR_SOURCE = /^(?:ATS-|Manual Import$)/i;
 export function isAggregatorSource(source: string | null | undefined): boolean {
   const value = String(source || '').trim();
   return value.length > 0 && !NON_AGGREGATOR_SOURCE.test(value);
+}
+
+/** BrassRing puts the selected requisition in its fragment, not tracking. */
+export function normalizeDirectPostingUrl(value: string): string {
+  const normalized = normalizeUrl(value);
+  try {
+    const source = new URL(value);
+    if (source.hostname.endsWith('.brassring.com') && /^#jobDetails=\d+_\d+$/i.test(source.hash)) {
+      const target = new URL(normalized); target.hash = source.hash; return target.href;
+    }
+  } catch { /* ordinary URL normalization handles empty input */ }
+  return normalized;
 }
 
 /**
@@ -222,7 +238,7 @@ export function selectDirectAtsMatch(
   // on the aggregator. Honor that already-stored exact destination when it is
   // present in the verified employer catalogue, even among same-title roles.
   if (isDirectPostingUrl(job.canonicalUrl)) {
-    const known = postings.find(posting => normalizeUrl(posting.url) === normalizeUrl(job.canonicalUrl!));
+    const known = postings.find(posting => directAtsPostingKey(posting) === directAtsPostingKey({ url: job.canonicalUrl! }));
     if (known) return known;
   }
 
@@ -341,7 +357,7 @@ export function directAtsPostingKey(posting: Pick<BoardPosting, 'url'>): string 
       return `lever:${url.hostname.toLowerCase()}:${board.slug}:posting:${postingId.toLowerCase()}`;
     }
   }
-  return normalizeUrl(posting.url);
+  return normalizeDirectPostingUrl(posting.url);
 }
 
 function uniquePostings(postings: readonly BoardPosting[]): BoardPosting[] {
@@ -361,6 +377,21 @@ function isSpecificPostingUrl(value: string | null | undefined): value is string
   try {
     const url = new URL(value);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return false;
+    if (/\.(?:svg|png|jpe?g|gif|webp|ico|css|js|woff2?|ttf|mp4|pdf)\/?$/i.test(url.pathname)) return false;
+    const host = url.hostname.toLowerCase();
+    if (host === 'careers.hireology.com') return /^\/[^/]+\/\d+\/(?:description|application)\/?$/i.test(url.pathname);
+    if (host === 'app.dover.com') return /^\/apply\/[^/]+\/[a-f0-9-]{36}\/?$/i.test(url.pathname);
+    if (host.endsWith('.hire.trakstar.com')) return /^\/jobs\/[a-z0-9]+\/?$/i.test(url.pathname);
+    if (host.endsWith('.prevueaps.com')) return /^\/jobs\/\d+(?:-\d+)?\.html$/i.test(url.pathname);
+    if (host.endsWith('.prismhr-hire.com') || host.endsWith('.hiringthing.com')) return /^\/job\/\d+(?:\/[^/]+)?\/?$/i.test(url.pathname);
+    if (host.endsWith('.icims.com')) return /^\/jobs\/\d+\/(?:[^/]+\/)?job\/?$/i.test(url.pathname);
+    if (host.endsWith('.taleo.net')) return /\/jobdetail\.ftl$/i.test(url.pathname)
+      && /^[\w-]+$/.test(url.searchParams.get('job') || '');
+    if (host.endsWith('.brassring.com')) return Boolean(url.searchParams.get('partnerid')
+      && url.searchParams.get('siteid') && (/^#jobDetails=\d+_\d+$/i.test(url.hash)
+        || /^\d+$/.test(url.searchParams.get('jobid') || '')));
+    if (host === 'myjobs.adp.com') return /^\/[^/]+\/?$/.test(url.pathname)
+      && /^\d+$/.test(url.searchParams.get('c') || '') && /^\d+$/.test(url.searchParams.get('r') || '');
     const parts = url.pathname.split('/').filter(Boolean);
     if ([...url.searchParams].some(([key, id]) => /^(?:job_?id|gh_jid|requisition_?id|req_?id|posting_?id|position_?id|opportunityid)$/i.test(key) && Boolean(id))) return true;
     if (parts.length < 2 || /^(?:jobs?|careers?|search|openings?|job_board|positions?)$/i.test(parts.at(-1)!)) return false;
@@ -585,7 +616,7 @@ export type DirectMatchDeps = {
   /** A bulk pass shares each board/title request, including failures. */
   liveCache?: Map<string, Promise<BoardPosting[] | null>>;
   onOutcome?: (outcome: 'matched_stored' | 'matched_live' | 'no_verified_board'
-    | 'no_unique_stored_match' | 'live_unsupported' | 'live_unavailable' | 'no_unique_live_match') => void;
+    | 'no_unique_stored_match' | 'stored_match_requires_live_confirmation' | 'live_unsupported' | 'live_unavailable' | 'no_unique_live_match') => void;
 };
 
 type DirectMatchStore = Pick<Prisma.TransactionClient, 'job'>
@@ -689,7 +720,11 @@ export async function findStoredAtsPostings(
       // employers.
       if (!sameEmployer({ company: row.company, employer: row.employer || resolveEmployer(row, index) }, { employer })) continue;
       const observedUrls = (row.observations || []).filter(observation => /^ATS-/i.test(observation.source))
-        .map(observation => observation.url).filter(isSpecificPostingUrl);
+        .map(observation => observation.url).filter(isSpecificPostingUrl)
+        // Legacy ADP observations attached equal numeric IDs from unrelated
+        // tenant career centers. They cannot lend this row's employer or JD
+        // to another tenant, nor seed another employer-board association.
+        .filter(url => !adpPostingsConflict(row.canonicalUrl || row.url, url));
       const directSource = /^ATS-/i.test(row.source || '');
       const recognized = [row.canonicalUrl, row.url].filter(isDirectPostingUrl) as string[];
       const urls = [...new Set([...recognized, ...observedUrls,
@@ -746,14 +781,26 @@ export async function findStoredAtsPostings(
     }
   }
   const registered = store.atsCompany && boards.size ? await store.atsCompany.findMany({
-    where: { OR: [...boards.values()] }, select: { platform: true, slug: true, status: true },
+    where: { OR: [...boards.values()] }, select: { platform: true, slug: true, status: true, excludedReason: true },
   }) : null;
   const enabled = registered ? new Set(registered.filter(row => row.status !== 'excluded')
     .map(row => `${row.platform}:${row.slug}`)) : new Set(boards.keys());
   const activeBoards = [...boards.entries()].filter(([key]) => enabled.has(key)).map(([, value]) => value);
-  const postings = complete ? candidates.filter(row => !row.board || enabled.has(`${row.board.platform}:${row.board.slug}`))
+  // Crawl yield/geography is not evidence that a saved requisition is invalid.
+  // Retain its identity without reactivating the board or scheduling a fetch.
+  // Explicit retirement, absent endpoints and unspecified exclusions still
+  // withhold their postings. Registration is not required for saved evidence.
+  const withheld = new Set((registered || []).filter(row => row.status === 'excluded'
+    && !/^(?:out_of_territory|proven_unproductive):/.test(row.excludedReason || ''))
+    .map(row => `${row.platform}:${row.slug}`));
+  const postings = complete ? candidates.filter(row => !row.board || !withheld.has(`${row.board.platform}:${row.board.slug}`))
     .map(row => ({ title: row.title, url: row.url, location: row.location, description: row.description })) : [];
-  return { postings, board: activeBoards.length === 1 ? activeBoards[0] : null, boards: activeBoards };
+  const crawlExcluded = new Set((registered || []).filter(row => row.status === 'excluded' && !withheld.has(`${row.platform}:${row.slug}`))
+    .map(row => `${row.platform}:${row.slug}`));
+  const verificationRequiredUrls = candidates.filter(row => row.board && (row.board.platform === 'adp'
+    || crawlExcluded.has(`${row.board.platform}:${row.board.slug}`))).map(row => row.url);
+  return { postings, board: activeBoards.length === 1 ? activeBoards[0] : null, boards: activeBoards,
+    ...(verificationRequiredUrls.length ? { verificationRequiredUrls } : {}) };
 }
 
 /**
@@ -859,17 +906,17 @@ export async function resolveDirectAtsPosting(
 /** Ingestion and scheduled repair share the same complete-catalogue decision. */
 export async function resolveDirectAtsPostingFromCatalogue(
   job: DirectMatchJob,
-  { postings: stored, board, boards }: StoredAtsCatalogue,
+  { postings: stored, board, boards, verificationRequiredUrls = [] }: StoredAtsCatalogue,
   deps: DirectMatchDeps,
 ): Promise<DirectAtsMatch | null> {
   if (!isAggregatorSource(job.source) || !job.title?.trim() || !job.company?.trim()) return null;
 
   const storedMatch = selectDirectAtsMatch(job, stored);
-  if (storedMatch) {
+  if (storedMatch && !verificationRequiredUrls.includes(storedMatch.url)) {
     deps.onOutcome?.('matched_stored');
     const identity = boardIdentityFromUrl(storedMatch.url) || board;
     return {
-      url: normalizeUrl(storedMatch.url) || storedMatch.url,
+      url: normalizeDirectPostingUrl(storedMatch.url) || storedMatch.url,
       description: storedMatch.description,
       platform: identity?.platform || 'unknown',
       slug: identity?.slug || '',
@@ -884,13 +931,26 @@ export async function resolveDirectAtsPostingFromCatalogue(
 
   // We know the company's board but not this posting, which is exactly the case
   // where the board has moved on since its last sweep.
-  if (deps.allowLivePing === false) { deps.onOutcome?.('no_unique_stored_match'); return null; }
+  if (deps.allowLivePing === false) { deps.onOutcome?.(storedMatch ? 'stored_match_requires_live_confirmation' : 'no_unique_stored_match'); return null; }
+  const employerIndex = (await employerRules(deps.store)).index;
+  const canonicalEmployer = (company: string) => resolveEmployer({ company }, employerIndex);
+  const canonicalCompany = canonicalEmployer(job.company);
+  if (workdayAliasCandidates(stored)) {
+    const identity = boardIdentityFromUrl(stored[0].url)!;
+    const aliases = await fetchEmployerBoardPostings(identity, deps.fetcher || safeExternalFetch,
+      deps.timeoutMs ?? 12_000, undefined, { title: job.title, company: canonicalCompany, canonicalEmployer, storedAliases: stored });
+    const aliasMatch = aliases && selectDirectAtsMatch(job, aliases);
+    if (aliasMatch) {
+      deps.onOutcome?.('matched_live');
+      return { url: normalizeDirectPostingUrl(aliasMatch.url), description: aliasMatch.description,
+        ...identity, matchedVia: 'live', matchedBy: 'requisition', postingTitle: aliasMatch.title, postingLocation: aliasMatch.location };
+    }
+  }
   if (!boards.length) { deps.onOutcome?.('no_verified_board'); return null; }
   if (boards.some(item => item.platform !== 'eightfold' && !supportsEmployerBoardLookup(item.platform))) {
     deps.onOutcome?.('live_unsupported');
     return null;
   }
-  const canonicalCompany = resolveEmployer({ company: job.company }, (await employerRules(deps.store)).index);
   // Workday/Eightfold queries are title-scoped even for multi-board employers.
   const key = `boards:${JSON.stringify(boards.map(item => `${item.platform}:${item.slug}`).sort())}:${directAtsTitleKey(job.title)}`;
   let pending = deps.liveCache?.get(key);
@@ -901,7 +961,7 @@ export async function resolveDirectAtsPostingFromCatalogue(
         { title: job.title, company: canonicalCompany }).then(items => items.length ? items : null)
       : fetchEmployerBoardPostings(item,
         deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000, undefined,
-        { title: job.title, company: canonicalCompany })))
+        { title: job.title, company: canonicalCompany, canonicalEmployer })))
         // An unavailable board could contain a competing requisition. Never
         // turn a partial employer catalogue into a seemingly unique match.
         .then(catalogues => catalogues.some(items => items === null) ? null : catalogues.flatMap(items => items!));
@@ -909,21 +969,27 @@ export async function resolveDirectAtsPostingFromCatalogue(
   }
   const live = await pending;
   if (live === null) { deps.onOutcome?.('live_unavailable'); return null; }
-  const liveMatch = selectDirectAtsMatch(job, live);
+  // A newer live catalogue cannot erase a different saved requisition and
+  // manufacture uniqueness. Only explicit source/req evidence can choose it.
+  const liveMatch = selectDirectAtsMatch(job, [...live, ...stored]);
   if (!liveMatch) { deps.onOutcome?.('no_unique_live_match'); return null; }
+  if (verificationRequiredUrls.includes(liveMatch.url)
+    && !live.some(posting => directAtsPostingKey(posting) === directAtsPostingKey(liveMatch))) {
+    deps.onOutcome?.('stored_match_requires_live_confirmation'); return null;
+  }
   const identity = boardIdentityFromUrl(liveMatch.url) || board;
   if (!identity) return null;
   deps.onOutcome?.('matched_live');
 
   return {
-    url: normalizeUrl(liveMatch.url) || liveMatch.url,
+    url: normalizeDirectPostingUrl(liveMatch.url) || liveMatch.url,
     description: liveMatch.description,
     platform: identity.platform,
     slug: identity.slug,
     matchedVia: 'live',
     matchedBy: declaredSourcePostingKeys(job.description).has(directAtsPostingKey(liveMatch)) ? 'source_url'
       : declaredRequisitionId(job.description) && declaredRequisitionId(job.description) === declaredRequisitionId(liveMatch.description)
-      ? 'requisition' : selectDirectAtsMatch({ ...job, description: null }, live)?.url === liveMatch.url ? 'title' : 'description',
+      ? 'requisition' : selectDirectAtsMatch({ ...job, description: null }, [...live, ...stored])?.url === liveMatch.url ? 'title' : 'description',
     postingTitle: liveMatch.title,
     postingLocation: liveMatch.location,
   };
@@ -965,8 +1031,8 @@ export function planDirectMatchEnrichment(
   const nextUrl = match.url;
   if (!nextUrl) return null;
 
-  const urlAlreadyDirect = normalizeUrl(String(job.canonicalUrl || '')) === normalizeUrl(nextUrl)
-    && normalizeUrl(String(job.url || '')) === normalizeUrl(nextUrl);
+  const urlAlreadyDirect = normalizeDirectPostingUrl(String(job.canonicalUrl || '')) === normalizeDirectPostingUrl(nextUrl)
+    && normalizeDirectPostingUrl(String(job.url || '')) === normalizeDirectPostingUrl(nextUrl);
   const betterDescription = selectFullerAtsDescription(job.description, match.description);
 
   if (urlAlreadyDirect && !betterDescription) return null;
