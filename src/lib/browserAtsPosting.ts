@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
 import { extractJsonLdJobPosting, jsonLdCompanyName } from './atsApi';
-import { jobvitePublishedLocation } from './jobviteLocation';
+import { jobviteHeaderLocation, jobvitePublishedLocation } from './jobviteLocation';
 import { isPlaceholderEmployerName } from './companyIdentity';
 import { talemetryPublishedEmployer } from './talemetryEmployer';
 import { avaturePublishedLocation } from './avatureLocation';
@@ -319,8 +319,24 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
             if (selectors[platform])
                 company = $(selectors[platform]!).first().text().trim() || null;
         }
-        if (!location && platform === 'jobvite')
-            location = jobvitePublishedLocation(doc.html, doc.url);
+        if (platform === 'jobvite') {
+            if (!location) location = jobvitePublishedLocation(doc.html, doc.url);
+            else {
+                // Jobvite can omit city/state from JSON-LD while publishing
+                // them in the header. A single country is not a complete site.
+                // Keep structured multi-site geography and applicant limits.
+                const places = Array.isArray(structured?.jobLocation) ? structured.jobLocation : [structured?.jobLocation];
+                const address = places.length === 1 ? places[0]?.address : undefined;
+                const hasSubnational = [address?.addressLocality, address?.addressRegion]
+                    .some(value => typeof value === 'string' && !!value.trim());
+                const restrictions = structuredBrowserLocation({ applicantLocationRequirements: structured?.applicantLocationRequirements });
+                if (address?.addressCountry && !hasSubnational && !restrictions) {
+                    const header = jobviteHeaderLocation(doc.html);
+                    if (header) location = [structured?.jobLocationType === 'TELECOMMUTE' && !/\bremote\b/i.test(header) ? 'Remote' : '', header]
+                        .filter(Boolean).join('; ');
+                }
+            }
+        }
         if (!location && platform === 'paylocity')
             location = paylocityPublishedLocation($('.job-preview-header .preview-location').first().text());
         if (!location && platform === 'avature')

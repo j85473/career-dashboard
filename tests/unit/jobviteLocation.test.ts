@@ -60,6 +60,33 @@ test('Jobvite fallback leaves complete structured multi-location metadata author
   assert.equal(posting?.location, 'Toronto, ON, Canada; Minneapolis, MN, US');
 });
 
+test('Jobvite country-only JSON-LD does not suppress the published Chicago header', () => {
+  const chicagoUrl = 'https://jobs.jobvite.com/shiftdigital/job/oUZ4Afwh';
+  const title = 'Dealer Sales & Process Consultant - Chicago';
+  const structured = { '@type': 'JobPosting', identifier: 'oUZ4Afwh', title,
+    hiringOrganization: { name: 'Shift Digital' }, description,
+    jobLocation: [{ address: { addressCountry: 'United States' } }] };
+  const parse = (data: object, meta: string) => parseBrowserPosting('jobvite', 'https://jobs.jobvite.com/shiftdigital/jobs',
+    { id: 'oUZ4Afwh', url: chicagoUrl, title }, [{ url: chicagoUrl, text: '', html:
+      `<script type="application/ld+json">${JSON.stringify(data)}</script>
+       <p class="jv-job-detail-meta">${meta}</p>` }]);
+  const header = 'Digital Field Consultant<span class="jv-inline-separator"></span>\n Chicago,\n United States';
+  assert.equal(parse(structured, header)?.location, 'Chicago, United States');
+  assert.equal(parse({ ...structured, jobLocation: { address: { addressCountry: { name: 'United States' } } } }, header)?.location,
+    'Chicago, United States');
+  assert.equal(parse({ ...structured, jobLocationType: 'TELECOMMUTE' }, header)?.location, 'Remote; Chicago, United States');
+  // A title or description mentioning a city cannot supply missing metadata.
+  assert.equal(parse(structured, '')?.location, 'United States');
+  assert.equal(parse(structured, 'Digital Field Consultant')?.location, 'United States');
+  // Complete structured sites and applicant restrictions retain their authority.
+  assert.equal(parse({ ...structured, jobLocation: [{ address: { addressRegion: 'Illinois', addressCountry: 'United States' } }] }, header)?.location,
+    'Illinois, United States');
+  assert.equal(parse({ ...structured, applicantLocationRequirements: [{ name: 'Illinois' }] }, header)?.location,
+    'United States; Illinois');
+  assert.equal(parse({ ...structured, jobLocation: [structured.jobLocation[0], { address: { addressCountry: 'Canada' } }] }, header)?.location,
+    'United States; Canada');
+});
+
 test('recovery rejects closed redirects and other requisitions even when a location is present', () => {
   const html = detail('Sales<span class="jv-inline-separator"></span>Toronto, ON');
   assert.equal(recoverableJobviteLocation(html, url, url), 'Toronto, ON');
