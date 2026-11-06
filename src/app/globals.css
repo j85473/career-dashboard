@@ -1199,7 +1199,7 @@ body {
   }
 
   /* Nested scrolling here would trap the page scroll inside a short box. */
-  .expand-body { flex-direction: column; overflow: visible; }
+  .expand-body { flex-direction: column; overflow: visible; min-height: auto; }
   .expand-col.left-col { border-right: 0; border-bottom: 1px solid var(--border); }
 
   /* Actions stay one reachable row instead of riding the bottom of ~5000px of

@@ -80,6 +80,11 @@ test('large location lists preserve every address while cards and dialog actions
       await page.getByRole('button',{name:'View Posting',exact:true}).click();
       await page.getByRole('button',{name:'Dismiss',exact:true}).click();
       await page.getByRole('button',{name:'Confirm Dismiss',exact:true}).click({trial:true});
+      if (viewport.width < 768) {
+        await page.locator('.expand-modal').evaluate(el=>{el.scrollTop=(el.scrollHeight-el.clientHeight)/2});
+        const footer=await page.locator('.expand-footer').boundingBox();
+        assert.ok(footer.y>=0 && footer.y+footer.height<=viewport.height+1,'actions stay visible while reading a long job description');
+      }
       const dialog=await page.getByRole('dialog').evaluate(el=>({width:el.clientWidth,content:el.scrollWidth}));
       assert.ok(dialog.content<=dialog.width+1,'dialog stays inside the viewport');
       if(process.env.LOCATION_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.LOCATION_SCREENSHOT_DIR}/locations-${process.env.PLAYWRIGHT_BROWSER||'chromium'}-${viewport.width}.png`});
