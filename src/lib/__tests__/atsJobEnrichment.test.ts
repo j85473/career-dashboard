@@ -1180,3 +1180,15 @@ test('a failed JSON response body still records a transport failure for shared d
   assert.equal(harness.failures[0].provider, 'ATS-workday Details');
   assert.equal(harness.failures[0].error, bodyError);
 });
+
+test('SmartRecruiters detail remote metadata replaces a city-only listing without mutating the saved download', async () => {
+  const job = { id: '744000159537989', name: 'Account Executive IV', location: { city: 'Columbus', region: 'OH' } };
+  const original = structuredClone(job);
+  const harness = createHarness({ body: { location: { city: 'Columbus', region: 'OH', country: 'us', remote: true, hybrid: false },
+    jobAd: { sections: { jobDescription: { text: 'Up to 50% travel expected.' } } } } });
+  const enriched = await enrichAtsListingJob({ platform: 'smartrecruiters', slug: 'Vericast', job, requestTimeoutMs: 1000 }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(enriched)?.location, 'Remote - United States; Columbus, OH, United States');
+  assert.equal(readAtsJobEnrichmentMarker(enriched)?.description, 'Up to 50% travel expected.');
+  assert.deepEqual(job, original);
+  assert.equal(harness.urls.length, 1);
+});

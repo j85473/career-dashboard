@@ -1,3 +1,4 @@
+import { smartRecruitersLocation } from './smartRecruitersLocation';
 import { readAtsRetryReason, type AtsRetryReason } from './atsRetryReason';
 import { AtsPlatformDeferredError, RateLimitedError, PLATFORM_THROTTLE_MS, fetchAtsPlatformResponse, platformPauseRemainingMs, waitForPlatformSlot, IngestionInterruptedError, interruptionError } from './atsProviderRequest';
 // Compatibility exports for consumers that predate the separate request runtime.
@@ -5700,6 +5701,7 @@ export async function ingestJobs(
              * description simply falls through to the existing JD recovery path
              * exactly as it does today.
              */
+            let smartRecruitersDetailLocation = board.platform === "smartrecruiters" ? atsEnrichmentMarker?.location : null;
             if (parentAtsNetworkAllowed && board.platform === "smartrecruiters" && !rawDescription && job.id) {
               const detailSource = `${boardSource} Details`;
               try {
@@ -5715,6 +5717,7 @@ export async function ingestJobs(
                 if (res.ok) {
                   markSourceSuccess(detailSource);
                   const detail = await res.json();
+                  smartRecruitersDetailLocation = smartRecruitersLocation(detail?.location);
                   // companyDescription is left out on purpose: it is boilerplate
                   // marketing that inflates length without describing the role,
                   // which is exactly what the 650-character gate exists to catch.
@@ -6043,7 +6046,7 @@ export async function ingestJobs(
                 ?? workdayLocationsText;
             } else if (board.platform === "smartrecruiters") {
               company = data.company?.name || board.slug;
-              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
+              locationStr = smartRecruitersDetailLocation || smartRecruitersLocation(job.location) || "Unknown Location";
             } else if (board.platform === "workable") {
               company = data.name || titleCaseSlug(board.slug);
               locationStr = locationObject?.city

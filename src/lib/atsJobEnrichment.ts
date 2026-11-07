@@ -1,3 +1,4 @@
+import { smartRecruitersLocation } from './smartRecruitersLocation';
 import { readAtsRetryReason, withAtsRetryReason, type AtsRetryReason } from './atsRetryReason';
 import { createAtsDetailRequestSession, AtsDetailHttpError, AtsDetailResponseError, AtsEnrichmentControlError, isAbortError } from './atsDetailRequest';
 import { publishedEmployerName } from './publicAtsEmployer';
@@ -119,7 +120,7 @@ const DETAIL_MUTABLE_FIELDS: Readonly<Record<string, ReadonlySet<DetailMutableFi
   successfactors: new Set(['company', 'location']),
   eightfold: new Set(['description', 'company', 'location']),
   workday: new Set(['description', 'company', 'location']),
-  smartrecruiters: new Set(['description']),
+  smartrecruiters: new Set(['description', 'location']),
   workable: new Set(['description']),
   bamboohr: new Set(['description']),
   breezy: new Set(['description', 'company', 'location']),
@@ -585,6 +586,7 @@ function preparedDetailPlan(input: {
   }
 
   if (platform === 'smartrecruiters') {
+    fields.location = smartRecruitersLocation(job.location);
     if (rawDescriptionPresent) return { plan: null, reason: 'description_already_present', fields };
     if (immutableListingTitleRejected(input)) {
       return { plan: null, reason: 'title_gate_rejected', fields };
@@ -596,6 +598,7 @@ function preparedDetailPlan(input: {
         `https://api.smartrecruiters.com/v1/companies/${slug}/postings/${jobId}`,
         fields,
         (payload) => {
+          const location = isRecord(payload) ? smartRecruitersLocation(payload.location) : null;
           const jobAd = isRecord(payload) && isRecord(payload.jobAd) ? payload.jobAd : null;
           const sections = jobAd && isRecord(jobAd.sections) ? jobAd.sections : null;
           const sectionText = (name: string) => {
@@ -604,6 +607,7 @@ function preparedDetailPlan(input: {
           };
           return {
             ...fields,
+            location: location || fields.location,
             description: [
               sectionText('jobDescription'),
               sectionText('qualifications'),
